@@ -31,8 +31,9 @@ def scrape_current_page(driver):
     if not table:
         return []
 
+    rows = table.find_all("tr")
     data = []
-    for row in table.find_all("tr"):
+    for row in rows:
         cols = row.find_all("td")
         cols_data = [c.get_text(strip=True) for c in cols]
         if cols_data:
@@ -41,32 +42,34 @@ def scrape_current_page(driver):
 
 
 def first_row_key(driver):
-    # something that changes when page changes (first row first cell)
+    """Used to confirm page actually changed after clicking next."""
     try:
         return driver.find_element(By.CSS_SELECTOR, "table tbody tr td").text.strip()
     except Exception:
         return None
 
 
-def click_next_page_by_number(driver, wait, current_page):
+def go_to_next_page(driver, wait, current_page):
     """
-    Clicks the next page button using its VISIBLE TEXT (e.g., '139').
-    This works even when aria-label is not simple and even if button is not in __middle.
+    Click next page by VISIBLE TEXT (e.g., '139'), not aria-label.
+    This fixes the issue where it stops at 138 even though 139 exists.
     """
     target = str(current_page + 1)
 
-    # If target exists as a visible page number, click it
-    # This XPath finds a button whose normalized text exactly equals target
-    buttons = driver.find_elements(By.XPATH, f"//div[contains(@class,'q-pagination')]//button[normalize-space()='{target}']")
+    # Find the next page button anywhere inside q-pagination by its visible number
+    buttons = driver.find_elements(
+        By.XPATH,
+        f"//div[contains(@class,'q-pagination')]//button[normalize-space()='{target}']"
+    )
 
     if not buttons:
-        return False  # no next page number visible => last page reached
+        return False  # no next page visible => last page reached
 
     before = first_row_key(driver)
 
     driver.execute_script("arguments[0].click();", buttons[0])
 
-    # Wait until table content changes so we don't scrape same page again
+    # Wait until table content changes (prevents scraping same page again)
     if before is not None:
         wait.until(lambda d: first_row_key(d) != before)
     else:
@@ -76,21 +79,28 @@ def click_next_page_by_number(driver, wait, current_page):
 
 
 def main():
+    # Nepal time for filename
     npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
     os.makedirs("outputs", exist_ok=True)
     out_xlsx = f"outputs/floorsheet_{run_date}.xlsx"
 
+    # Auto detect GitHub Actions (must run headless there)
+    IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
+
     chrome_options = webdriver.ChromeOptions()
+    if IS_GITHUB:
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+    else:
+        # Desktop: visible browser
+        chrome_options.add_argument("--start-maximized")
 
-    # Desktop run (visible browser)
-    # For GitHub actions, uncomment headless
-    # chrome_options.add_argument("--headless=new")
-
-    chrome_options.add_argument("--start-maximized")
-
-    driver = webdriver.Chrome(options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)  # Selenium Manager auto driver
     wait = WebDriverWait(driver, 30)
 
     try:
@@ -105,9 +115,8 @@ def main():
             all_data.extend(scrape_current_page(driver))
             print(f"Scraped page: {current_page}")
 
-            moved = click_next_page_by_number(driver, wait, current_page)
-            if not moved:
-                print("Reached last page (no next page number found).")
+            if not go_to_next_page(driver, wait, current_page):
+                print("Reached last page.")
                 break
 
             current_page += 1
