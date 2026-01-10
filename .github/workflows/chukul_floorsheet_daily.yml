@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# ✅ Prevent multiple workflow runs from pushing at the same time
+concurrency:
+  group: daily-floorsheet
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -17,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ✅ important for pull/rebase to work properly
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -32,20 +39,21 @@ jobs:
         run: |
           python scrape_chukul_floorsheet.py
 
-      # ✅ NEW STEP: generate market report from outputs/
       - name: Generate Market Overview Report
         run: |
           python scripts/generate_market_report.py
 
-      # ✅ UPDATED: commit both floorsheet + report
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add BOTH floorsheets and reports
+          # Add BOTH floorsheet + report outputs
           git add outputs/*.xlsx outputs/reports/*.xlsx || true
 
-          git status
+          # Commit if there are changes
           git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
-          git push
+
+          # ✅ Fix push rejection: sync with remote then push
+          git pull --rebase origin main
+          git push origin main
