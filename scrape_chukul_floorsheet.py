@@ -101,7 +101,7 @@ def main():
         chrome_options.add_argument("--start-maximized")
 
     driver = webdriver.Chrome(options=chrome_options)  # Selenium Manager auto driver
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 40)
 
     try:
         driver.get(URL)
