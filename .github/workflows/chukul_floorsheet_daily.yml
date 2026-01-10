@@ -32,11 +32,20 @@ jobs:
         run: |
           python scrape_chukul_floorsheet.py
 
+      # ✅ NEW STEP: generate market report from outputs/
+      - name: Generate Market Overview Report
+        run: |
+          python scripts/generate_market_report.py
+
+      # ✅ UPDATED: commit both floorsheet + report
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add outputs/*.xlsx || true
-          git commit -m "Daily floorsheet output (3:30 PM NPT)" || echo "No changes to commit"
+          # Add BOTH floorsheets and reports
+          git add outputs/*.xlsx outputs/reports/*.xlsx || true
+
+          git status
+          git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
           git push
