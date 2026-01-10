@@ -13,7 +13,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 # =========================
 # CONFIG (Repo relative)
 # =========================
-INPUT_FOLDER = "outputs"                         # daily floorsheets are saved here
+INPUT_FOLDER = "outputs"                         # daily floorsheets are here
 REPORT_FOLDER = os.path.join("outputs", "reports")
 REPORT_NAME_PREFIX = "Market_Overview_Report"
 
@@ -50,7 +50,7 @@ def _safe_float(x):
 
 def _parse_date_from_filename(fname: str):
     """
-    Expected your saved files like:
+    Accepts:
       floorsheet_2026-01-10.xlsx
       floorsheet_20260110.xlsx
     """
@@ -69,51 +69,63 @@ def _parse_date_from_filename(fname: str):
 
 def _normalize_columns_exact(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Your input headers (from screenshot):
+    Supports BOTH header styles:
+
+    Style A:
       Transact No. | Symbol | Buyer Broker | Seller Broker | Quantity | Rate | Amount
 
-    This function maps exactly these names.
-    If your file has small variations (spaces, case), it still works.
+    Style B (your GitHub output):
+      Transact No. | Symbol | Buyer | Seller | Quantity | Rate | Amount
     """
-    # Normalize columns
+    # Normalize column names
     col_map = {c: re.sub(r"\s+", " ", str(c).strip().lower()) for c in df.columns}
     df = df.rename(columns=col_map)
 
-    # Exact expected names (lowercase normalized)
-    expected = {
-        "transact no.": "Transact No.",
-        "symbol": "Symbol",
-        "buyer broker": "Buyer Broker",
-        "seller broker": "Seller Broker",
-        "quantity": "Quantity",
-        "rate": "Rate",
-        "amount": "Amount",
-    }
+    # detect buyer/seller columns
+    buyer_col = None
+    seller_col = None
 
-    # Check required
-    required = ["symbol", "buyer broker", "seller broker", "quantity", "rate"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
+    if "buyer broker" in df.columns:
+        buyer_col = "buyer broker"
+    elif "buyer" in df.columns:
+        buyer_col = "buyer"
+
+    if "seller broker" in df.columns:
+        seller_col = "seller broker"
+    elif "seller" in df.columns:
+        seller_col = "seller"
+
+    required_missing = []
+    if "symbol" not in df.columns:
+        required_missing.append("symbol")
+    if buyer_col is None:
+        required_missing.append("buyer broker OR buyer")
+    if seller_col is None:
+        required_missing.append("seller broker OR seller")
+    if "quantity" not in df.columns:
+        required_missing.append("quantity")
+    if "rate" not in df.columns:
+        required_missing.append("rate")
+
+    if required_missing:
         raise ValueError(
             "Missing required columns in floorsheet file: "
-            + ", ".join(missing)
+            + ", ".join(required_missing)
             + "\nColumns found: " + ", ".join(df.columns.astype(str).tolist())
         )
 
     out = pd.DataFrame()
     out["Symbol"] = df["symbol"].astype(str).str.upper().str.strip()
-    out["Buyer"] = df["buyer broker"].astype(str).str.strip()
-    out["Seller"] = df["seller broker"].astype(str).str.strip()
+    out["Buyer"] = df[buyer_col].astype(str).str.strip()
+    out["Seller"] = df[seller_col].astype(str).str.strip()
     out["Qty"] = df["quantity"].apply(_safe_float).fillna(0).astype(float)
     out["Rate"] = df["rate"].apply(_safe_float).astype(float)
 
-    # Amount: use existing if available else Qty*Rate
     if "amount" in df.columns:
         out["Amount"] = df["amount"].apply(_safe_float).astype(float)
     else:
         out["Amount"] = out["Qty"] * out["Rate"]
 
-    # Date column usually not inside file; we will set from filename later
     out["Date"] = pd.NaT
     return out
 
@@ -145,7 +157,6 @@ def load_all_floorsheets(folder: str) -> pd.DataFrame:
 
         df2 = _normalize_columns_exact(df)
 
-        # Date from filename
         d = _parse_date_from_filename(fn)
         if pd.isna(d):
             print(f"[WARN] Skipping {fn} (could not parse date from filename).")
@@ -165,9 +176,6 @@ def load_all_floorsheets(folder: str) -> pd.DataFrame:
 
 
 def build_daily_symbol_prices(trades: pd.DataFrame) -> pd.DataFrame:
-    """
-    Daily last price is approximated by 'last row' rate in that day-symbol.
-    """
     t = trades.copy()
     t["Date"] = pd.to_datetime(t["Date"])
     t["_row"] = np.arange(len(t))
@@ -244,7 +252,6 @@ def compute_broker_net(trades: pd.DataFrame, window_days: int) -> pd.DataFrame:
     m["Net_Amount"] = m["Buy_Amt"] - m["Sell_Amt"]
     m["Average Cost"] = np.where(m["Net_Qty"] > 0, m["Net_Amount"] / m["Net_Qty"].replace(0, np.nan), np.nan)
 
-    # latest price for each symbol
     latest_prices = (
         sub[sub["Date"] == latest]
         .sort_values(["Symbol"])
@@ -390,7 +397,6 @@ def style_block(ws, start_row, start_col, end_row, end_col):
             else:
                 cell.alignment = cell_align
 
-    # auto width
     for c in range(start_col, end_col + 1):
         max_len = 10
         for r in range(start_row, end_row + 1):
@@ -477,4 +483,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
