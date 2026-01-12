@@ -1567,24 +1567,33 @@ document.getElementById('brokerModal')?.addEventListener('click', (e)=>{
 /* -------------------- rendering: stock detail -------------------- */
 function renderDetailInit(){
   const sel = document.getElementById('detailSymbol');
+  const dl  = document.getElementById('symbolsDatalist');
   sel.innerHTML='';
+  if(dl) dl.innerHTML='';
+
+  // sort by turnover so dropdown stays meaningful
   const sorted = [...stocks].sort((a,b)=>b.amount-a.amount);
+
   for(const s of sorted){
     const opt = document.createElement('option');
     opt.value = s.symbol;
     opt.textContent = `${s.symbol} (turnover ${fmt1.format(s.amount)})`;
     sel.appendChild(opt);
 
+    // datalist suggestions (used by the search input)
     if(dl){
       const o2 = document.createElement('option');
       o2.value = s.symbol;
       dl.appendChild(o2);
     }
   }
+
+  // default: pick a RANDOM symbol from available data (not always the first)
   if(sorted.length){
-    selectDetailSymbol(sorted[0].symbol);
+    const pick = sorted[Math.floor(Math.random()*sorted.length)].symbol;
+    selectDetailSymbol(pick);
     const inp = document.getElementById('detailSymbolSearch');
-    if(inp) inp.value = sorted[0].symbol;
+    if(inp) inp.value = pick;
   }
 }
 
