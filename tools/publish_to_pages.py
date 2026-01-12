@@ -3,19 +3,20 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUTS = ROOT / "outputs"      # your daily XLSX files are here
+OUTPUTS = ROOT / "outputs"
 DOCS = ROOT / "docs"
 DATA = DOCS / "data"
+
 DATA.mkdir(parents=True, exist_ok=True)
 
-xlsx_files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
-if not xlsx_files:
-    raise SystemExit("No floorsheet_*.xlsx found in outputs/")
+files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
+if not files:
+    raise SystemExit("No floorsheet files found")
 
 manifest = {"files": [], "latest": None}
 
-for f in xlsx_files:
-    date = f.stem.replace("floorsheet_", "")           # YYYY-MM-DD
+for f in files:
+    date = f.stem.replace("floorsheet_", "")
     csv_name = f"floorsheet_{date}.csv"
     csv_path = DATA / csv_name
 
@@ -29,5 +30,9 @@ for f in xlsx_files:
 
 manifest["latest"] = manifest["files"][-1]["date"]
 
-(DATA / "index.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-print("Published", len(xlsx_files), "days. Latest:", manifest["latest"])
+(DATA / "index.json").write_text(
+    json.dumps(manifest, indent=2),
+    encoding="utf-8"
+)
+
+print("Published", len(files), "days")
