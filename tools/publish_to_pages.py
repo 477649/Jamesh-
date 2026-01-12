@@ -2,69 +2,40 @@ import json
 from pathlib import Path
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]   # repo root
+ROOT = Path(__file__).resolve().parents[1]
 OUTPUTS = ROOT / "outputs"
-DATA = ROOT / "docs" / "data"
+DOCS = ROOT / "docs"
+DATA = DOCS / "data"
+
 DATA.mkdir(parents=True, exist_ok=True)
 
-INDEX_PATH = DATA / "index.json"
+# Read all daily XLSX floorsheets
+files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
+if not files:
+    raise SystemExit("No floorsheet XLSX files found.")
 
-# -------------------------------------------------
-# 1) Find latest XLSX only
-# -------------------------------------------------
-xlsx_files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
-if not xlsx_files:
-    raise SystemExit("No floorsheet_*.xlsx found in outputs/")
+manifest = {"files": [], "latest": None}
 
-latest_xlsx = xlsx_files[-1]
-latest_date = latest_xlsx.stem.replace("floorsheet_", "").strip()
-csv_name = f"floorsheet_{latest_date}.csv"
-csv_path = DATA / csv_name
+for f in files:
+    date = f.stem.replace("floorsheet_", "")
+    csv_name = f"floorsheet_{date}.csv"
+    csv_path = DATA / csv_name
 
-# -------------------------------------------------
-# 2) Convert XLSX -> CSV (always overwrite latest)
-# -------------------------------------------------
-df = pd.read_excel(latest_xlsx)
+    # Convert XLSX → CSV
+    df = pd.read_excel(f)
+    df.to_csv(csv_path, index=False)
 
-rename_map = {
-    "Transact No": "Transact No.",
-    "Transact": "Transact No.",
-    "Quantity ": "Quantity",
-    "Rate ": "Rate",
-    "Amount ": "Amount",
-}
-df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+    manifest["files"].append({
+        "date": date,
+        "file": f"data/{csv_name}"
+    })
 
-required = {"Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"}
-missing = required - set(df.columns)
-if missing:
-    raise SystemExit(f"Missing required columns in {latest_xlsx.name}: {sorted(missing)}")
+manifest["latest"] = manifest["files"][-1]["date"]
 
-df.to_csv(csv_path, index=False)
+# Write index.json for dashboard
+(DATA / "index.json").write_text(
+    json.dumps(manifest, indent=2),
+    encoding="utf-8"
+)
 
-# -------------------------------------------------
-# 3) Write index.json (LATEST DAY ONLY)
-# -------------------------------------------------
-manifest = {
-    "files": [
-        {
-            "date": latest_date,
-            "file": f"data/{csv_name}"
-        }
-    ],
-    "latest": latest_date
-}
-
-INDEX_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-# -------------------------------------------------
-# 4) Cleanup: remove all other CSVs
-# -------------------------------------------------
-for csv in DATA.glob("floorsheet_*.csv"):
-    if csv.name != csv_name:
-        csv.unlink(missing_ok=True)
-
-print("✅ Published latest day only")
-print(f"   Date   : {latest_date}")
-print(f"   CSV    : {csv_name}")
-print(f"   Index  : {INDEX_PATH}")
+print(f"Published {len(files)} days. Latest = {manifest['latest']}")
