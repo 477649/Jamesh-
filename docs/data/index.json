@@ -1,20 +1,7 @@
-import json
-from pathlib import Path
-
-DATA_DIR = Path("docs/data")
-
-files = []
-for csv in sorted(DATA_DIR.glob("floorsheet_*.csv")):
-    date = csv.stem.replace("floorsheet_", "")
-    files.append({
-        "date": date,
-        "file": f"data/{csv.name}"
-    })
-
-index = {
-    "files": files,
-    "latest": files[-1]["date"] if files else None
+{
+  "files": [
+    { "date": "2026-01-11", "file": "data/floorsheet_2026-01-11.csv" },
+    { "date": "2026-01-12", "file": "data/floorsheet_2026-01-12.csv" }
+  ],
+  "latest": "2026-01-12"
 }
-
-with open(DATA_DIR / "index.json", "w", encoding="utf-8") as f:
-    json.dump(index, f, indent=2)
