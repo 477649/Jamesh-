@@ -1,1 +1,1571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>NEPSE Floorsheet 360° Advanced Dashboard (White Theme)</title>
 
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#f4f6fb;
+      --panel:#ffffff;
+      --panel2:#f9fafc;
+      --muted:#5f6b85;
+      --text:#0f172a;
+      --border: rgba(15,23,42,.12);
+      --accent:#2563eb;
+      --good:#16a34a;
+      --bad:#dc2626;
+      --warn:#f59e0b;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+      color: var(--text);
+    }
+    a{ color: var(--accent); text-decoration:none; }
+    .wrap{ max-width: 1400px; margin:0 auto; padding:18px; }
+    .topbar{
+      display:flex; gap:14px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+      padding:14px 16px; border:1px solid var(--border); border-radius:18px;
+      background: #ffffff;
+      backdrop-filter: blur(6px);
+    }
+    .brand h1{ margin:0; font-size:18px; letter-spacing:.2px; }
+    .brand p{ margin:2px 0 0 0; font-size:12px; color:var(--muted); line-height:1.35; }
+
+    .drop{
+      border:2px dashed #c7d2fe;
+      background:#f8faff;
+      padding:10px 12px;
+      border-radius:14px;
+      cursor:pointer;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      min-width:320px;
+      justify-content:space-between;
+    }
+    .drop small{ color: var(--muted); display:block; }
+    .btn{
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight: 700;
+    }
+    .btn:hover{ background: rgba(255,255,255,.10); }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+    .tabs{
+      margin-top: 14px;
+      display:flex; gap:10px; flex-wrap:wrap;
+    }
+    .tab{
+      padding: 10px 12px;
+      border:1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(18,28,49,.55);
+      cursor:pointer;
+      font-weight: 800;
+      color: var(--muted);
+      user-select:none;
+    }
+    .tab.active{
+      background: rgba(105,167,255,.14);
+      border-color: rgba(105,167,255,.4);
+      color: var(--text);
+    }
+
+    .grid{
+      margin-top: 12px;
+      display:grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+    }
+    .card{
+      background: var(--panel);
+      border:1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px;
+      box-shadow: 0 6px 16px rgba(15,23,42,.06);
+    }
+    .kpi{ grid-column: span 3; }
+    .kpi h3{ margin:0; font-size: 12px; color: var(--muted); font-weight: 700; }
+    .kpi .v{ margin-top:6px; font-size: 22px; font-weight: 900; }
+    .kpi .s{ margin-top:4px; font-size: 12px; color: var(--muted); }
+
+    .panel{ grid-column: span 12; }
+    .panel h2{ margin:0 0 10px 0; font-size: 14px; }
+    .row{ display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .controls{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    input, select{
+      background: rgba(255,255,255,.06);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 9px 10px;
+      border-radius: 12px;
+      outline:none;
+      min-height: 36px;
+    }
+    .hint{ font-size:12px; color: var(--muted); line-height:1.35; }
+
+    .two{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .three{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .span6{ grid-column: span 6; }
+    .span4{ grid-column: span 4; }
+    .span8{ grid-column: span 8; }
+    .span12{ grid-column: span 12; }
+
+    canvas{ max-height: 340px; }
+    table{
+      width:100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+    th, td{
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      vertical-align: middle;
+    }
+    th{
+      text-align:left;
+      color: var(--muted);
+      font-weight: 800;
+      user-select:none;
+      cursor:pointer;
+    }
+    td.num{ text-align:right; font-variant-numeric: tabular-nums; }
+    .pill{
+      display:inline-flex; align-items:center; gap:6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-weight: 900; font-size: 11px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.06);
+    }
+    .pill.good{ border-color: rgba(86,211,100,.35); background: rgba(86,211,100,.12); }
+    .pill.bad { border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.12); }
+    .pill.warn{ border-color: rgba(255,209,102,.35); background: rgba(255,209,102,.12); }
+
+    .hidden{ display:none !important; }
+
+    .footer{
+      margin-top: 14px;
+      padding: 12px 14px;
+      border:1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(18,28,49,.55);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 1100px){
+      .kpi{ grid-column: span 6; }
+      .two, .three{ grid-template-columns: 1fr; }
+      .drop{
+      border:2px dashed #c7d2fe;
+      background:#f8faff;
+      padding:10px 12px;
+      border-radius:14px;
+      cursor:pointer;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      min-width:320px;
+      justify-content:space-between;
+    }
+    }
+  
+
+th{ background:#f8fafc; }
+
+
+/* Auto-feed mode: hide manual upload UI */
+#dropZone, #fileInput { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>NEPSE Floorsheet – 360° Advanced Dashboard (White Theme)</h1>
+        <p>
+          Auto-feeds from GitHub Pages (docs/data/index.json). You can also drag/drop CSV(s) in local mode to get: market summary, stock heat ranking, broker dominance,
+          accumulation/distribution, support-resistance zones (volume-by-price), big-trade detection, and watchlist signals.
+        </p>
+      </div>
+
+    <div id="periodBadge" class="pill warn" style="font-weight:900;">
+      Period: Auto
+    </div>
+
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label class="drop" id="dropZone" title="Drop CSV or click to select">
+          <div>
+            <div style="font-weight:900;">📄 Drop CSV(s) here (or click)</div>
+            <small>Columns: Transact No., Symbol, Buyer, Seller, Quantity, Rate, Amount</small>
+            <small>Tip: You can select multiple files to combine days.</small>
+          </div>
+          <input id="fileInput" type="file" accept=".csv" multiple style="display:none"/>
+        </label>
+        <button class="btn" id="btnExportStocks" disabled>Export Stocks CSV</button>
+        <button class="btn" id="btnExportBrokers" disabled>Export Brokers CSV</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="market">Market</div>
+      <div class="tab" data-tab="stocks">Stocks</div>
+      <div class="tab" data-tab="brokers">Brokers</div>
+      <div class="tab" data-tab="detail">Stock Detail</div>
+    </div>
+
+    <!-- MARKET -->
+    <div id="tab-market" class="grid">
+      <div class="card kpi"><h3>Total Turnover</h3><div class="v" id="kpiTurnover">—</div><div class="s" id="kpiTurnoverSub"></div></div>
+      <div class="card kpi"><h3>Total Volume</h3><div class="v" id="kpiVolume">—</div><div class="s" id="kpiVolumeSub"></div></div>
+      <div class="card kpi"><h3>Total Trades</h3><div class="v" id="kpiTrades">—</div><div class="s" id="kpiTradesSub"></div></div>
+      <div class="card kpi"><h3>Liquidity Quality</h3><div class="v" id="kpiLiquidity">—</div><div class="s" id="kpiLiquiditySub"></div></div>
+
+      <div class="card panel">
+        <div class="row">
+          <h2>Market Activity Overview</h2>
+          <div class="controls">
+            <select id="marketMetric">
+              <option value="turnover">Turnover by Symbol</option>
+              <option value="volume">Volume by Symbol</option>
+              <option value="trades">Trades by Symbol</option>
+              <option value="rangePct">Range% (High-Low)/VWAP</option>
+              <option value="pressure">Pressure (BuyerTop5% - SellerTop5%)</option>
+              <option value="bigTradeShare">Big-Trade Share</option>
+            </select>
+            <select id="topNMarket">
+              <option value="10">Top 10</option>
+              <option value="15">Top 15</option>
+              <option value="20" selected>Top 20</option>
+              <option value="30">Top 30</option>
+            </select>
+          </div>
+        </div>
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Symbols Chart</h2>
+            <canvas id="chartMarketTop"></canvas>
+            <div class="hint">Use dropdown to switch metric. Shows top symbols only.</div>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Broker Dominance (Market)</h2>
+            <canvas id="chartMarketBrokers"></canvas>
+            <div class="hint">Net Qty = BuyQty - SellQty. Sorted by absolute net.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <div class="row">
+          <h2>Big Trades (Institution-style) + Liquidity Concentration</h2>
+          <div class="controls">
+            <select id="bigTradePct">
+              <option value="0.95">Top 5% Amount</option>
+              <option value="0.97">Top 3% Amount</option>
+              <option value="0.99" selected>Top 1% Amount</option>
+            </select>
+          </div>
+        </div>
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Big Trades by Symbol (share of turnover)</h2>
+            <canvas id="chartBigTrades"></canvas>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Turnover Concentration</h2>
+            <canvas id="chartConcentration"></canvas>
+            <div class="hint">How much turnover is contributed by the Top-10 trades vs rest.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STOCKS -->
+    <div id="tab-stocks" class="grid hidden">
+      
+
+      <div class="card panel">
+        <div class="row">
+          <h2>Recommendations (Data-driven signals • Not financial advice)</h2>
+          <div class="controls">
+            <select id="recModel">
+              <option value="balanced" selected>Model: Balanced (Turnover + Pressure + Big trades)</option>
+              <option value="flow">Model: Flow (Pressure heavy)</option>
+              <option value="liquidity">Model: Liquidity (Turnover heavy)</option>
+            </select>
+            <select id="recTopN">
+              <option value="10">Top 10</option>
+              <option value="20" selected>Top 20</option>
+              <option value="30">Top 30</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Buy Candidates (Accumulation)</h2>
+            <table id="recBuyTable">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th class="num">Score</th>
+                  <th class="num">Turnover</th>
+                  <th class="num">Pressure</th>
+                  <th class="num">Big%</th>
+                  <th>Signal</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="hint">
+              Higher score = stronger accumulation + liquidity + big-trade support over selected period.
+            </div>
+          </div>
+
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Sell Candidates (Distribution)</h2>
+            <table id="recSellTable">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th class="num">Score</th>
+                  <th class="num">Turnover</th>
+                  <th class="num">Pressure</th>
+                  <th class="num">Big%</th>
+                  <th>Signal</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="hint">
+              Higher score = stronger distribution (selling pressure) over selected period.
+            </div>
+          </div>
+        </div>
+
+        <div class="hint" style="margin-top:10px;">
+          <b>Important:</b> Floorsheet data does not include full order-book, news, or official close/float. Treat these as
+          <b>signals</b> (watchlist ideas) to combine with your own strategy, risk limits, and confirmations.
+        </div>
+      </div>
+<div class="card panel">
+        <div class="row">
+          <h2>Stocks Table (filter, rank, signals)</h2>
+          <div class="controls">
+            <input id="stockSearch" placeholder="Search symbol (e.g., NIFRA)" />
+            <select id="stockRankBy">
+              <option value="turnover" selected>Rank: Turnover</option>
+              <option value="volume">Rank: Volume</option>
+              <option value="pressure">Rank: Pressure</option>
+              <option value="rangePct">Rank: Range%</option>
+              <option value="bigTradeShare">Rank: Big-trade share</option>
+              <option value="ratesCount">Rank: #Price levels</option>
+              <option value="modalRateShare">Rank: Modal price share</option>
+            </select>
+            <select id="stockMinTrades">
+              <option value="0">Min trades: 0</option>
+              <option value="5">Min trades: 5</option>
+              <option value="10">Min trades: 10</option>
+              <option value="20">Min trades: 20</option>
+            </select>
+            <select id="stockMinTurn">
+              <option value="0">Min turnover: 0</option>
+              <option value="100000">Min turnover: 100k</option>
+              <option value="500000">Min turnover: 500k</option>
+              <option value="1000000">Min turnover: 1M</option>
+            </select>
+          </div>
+        </div>
+
+        <table id="stocksTable">
+          <thead>
+            <tr>
+              <th data-k="symbol">Symbol</th>
+              <th data-k="trades">Trades</th>
+              <th data-k="qty">Qty</th>
+              <th data-k="amount">Turnover</th>
+              <th data-k="vwap">VWAP</th>
+              <th data-k="high">High</th>
+              <th data-k="low">Low</th>
+              <th data-k="rangePct">Range%</th>
+              <th data-k="pressure">Pressure</th>
+              <th data-k="bigTradeShare">Big%</th>
+              <th data-k="ratesCount">#Rates</th>
+              <th data-k="modalRateShare">Modal%</th>
+              <th data-k="signal">Signal</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <div class="hint">
+          Signals (rule-based):<br/>
+          • <b>Strong Accumulation</b> if Pressure ≥ 0.25 and Turnover in top 20% <br/>
+          • <b>Distribution Warning</b> if Pressure ≤ −0.25 <br/>
+          • <b>Manipulation Risk</b> if Modal price share is very high and #Rates is very low (tape concentration) <br/>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <div class="row">
+          <h2>Heat Ranking (Top 20)</h2>
+          <div class="controls">
+            <select id="heatMetric">
+              <option value="amount" selected>Turnover</option>
+              <option value="qty">Volume</option>
+              <option value="pressure">Pressure</option>
+              <option value="bigTradeShare">Big-trade share</option>
+            </select>
+          </div>
+        </div>
+        <canvas id="chartHeat"></canvas>
+      </div>
+    </div>
+
+    <!-- BROKERS -->
+    <div id="tab-brokers" class="grid hidden">
+      <div class="card panel">
+        <div class="row">
+          <h2>Brokers Table (net flow, focus)</h2>
+          <div class="controls">
+            <input id="brokerSearch" placeholder="Search broker code (e.g., 84)" />
+            <select id="brokerRankBy">
+              <option value="netQty" selected>Rank: |Net Qty|</option>
+              <option value="buyQty">Rank: Buy Qty</option>
+              <option value="sellQty">Rank: Sell Qty</option>
+              <option value="netAmt">Rank: |Net Amount|</option>
+              <option value="symbols">Rank: #Symbols traded</option>
+              <option value="focus">Rank: Focus% (Top3 symbols)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Brokers (Net Qty)</h2>
+            <canvas id="chartBrokersNet"></canvas>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Buy vs Sell Amount (Top brokers)</h2>
+            <canvas id="chartBrokersBuySell"></canvas>
+          </div>
+        </div>
+
+        <table id="brokersTable">
+          <thead>
+            <tr>
+              <th data-k="broker">Broker</th>
+              <th data-k="buyTrades">Buy Trades</th>
+              <th data-k="buyQty">Buy Qty</th>
+              <th data-k="buyAmt">Buy Amount</th>
+              <th data-k="sellTrades">Sell Trades</th>
+              <th data-k="sellQty">Sell Qty</th>
+              <th data-k="sellAmt">Sell Amount</th>
+              <th data-k="netQty">Net Qty</th>
+              <th data-k="netAmt">Net Amount</th>
+              <th data-k="symbols">#Symbols</th>
+              <th data-k="focus">Focus%</th>
+              <th data-k="tag">Tag</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <div class="hint">
+          <b>Focus%</b> = turnover from broker’s top-3 symbols / total broker turnover. High focus often indicates directional intent.
+        </div>
+      </div>
+    </div>
+
+    <!-- STOCK DETAIL -->
+    <div id="tab-detail" class="grid hidden">
+      <div class="card panel">
+        <div class="row">
+          <h2>Stock Detail (choose a symbol)</h2>
+          <div class="controls">
+            <select id="detailSymbol"></select>
+            <select id="detailBigPct">
+              <option value="0.95">Big trades: top 5% amount</option>
+              <option value="0.97">Big trades: top 3% amount</option>
+              <option value="0.99" selected>Big trades: top 1% amount</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="three">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Volume by Price (Support/Resistance)</h2>
+            <canvas id="chartVolByPrice"></canvas>
+            <div class="hint">Higher bars = heavy traded price zones (battle zones).</div>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Buyers (Qty)</h2>
+            <canvas id="chartTopBuyers"></canvas>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Top Sellers (Qty)</h2>
+            <canvas id="chartTopSellers"></canvas>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Net Flow by Broker (Stock)</h2>
+            <canvas id="chartNetByBroker"></canvas>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Trade Size Distribution</h2>
+            <canvas id="chartTradeSize"></canvas>
+            <div class="hint">Helps identify block trading (fat tail) vs retail noise.</div>
+          </div>
+        </div>
+
+        <div class="two">
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Big Trades for this Stock</h2>
+            <table id="bigTradesTable">
+              <thead>
+                <tr>
+                  <th>Transact</th><th>Buyer</th><th>Seller</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="card" style="background:var(--panel2);">
+            <h2 style="margin:0 0 8px 0; font-size:13px;">Microstructure Flags</h2>
+            <div id="microFlags" class="hint"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <b>Notes / Limitations:</b> Floorsheet does not include official OHLC close, order book depth, or float; this dashboard focuses on
+      transaction tape intelligence (VWAP, broker dominance, concentration, and price-volume zones).
+      If you later add OHLC + sector + float, we can extend to RSI/MACD, sector rotation, and float turnover.
+    </div>
+  </div>
+
+<script>
+/* -------------------- utilities -------------------- */
+const fmt = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+const fmt1 = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1});
+const fmt0 = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+function toNum(x){
+  if(x===null || x===undefined) return 0;
+  if(typeof x === 'number') return x;
+  const s = String(x).replace(/,/g,'').trim();
+  const v = Number(s);
+  return Number.isFinite(v) ? v : 0;
+}
+function pct(x){ return (x*100); }
+function clamp(n,a,b){ return Math.min(b, Math.max(a,n)); }
+function pillClass(tag){
+  if(tag.includes('Strong')) return 'good';
+  if(tag.includes('Warning')) return 'bad';
+  if(tag.includes('Risk')) return 'warn';
+  if(tag.includes('Mild')) return 'warn';
+  return '';
+}
+function downloadText(filename, text){
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 500);
+}
+
+/* -------------------- global state -------------------- */
+let rawRows = [];
+let stocks = [];
+let brokers = [];
+let stockDetail = new Map(); // symbol -> {rows, ...}
+let charts = {}; // key -> Chart instance
+let bigTradeThreshold = 0.99;
+
+/* -------------------- parsing & compute -------------------- */
+function normalizeRow(r){
+  return {
+    txn: String(r['Transact No.'] ?? r['Transact No'] ?? r['Transact'] ?? '').trim(),
+    symbol: String(r['Symbol'] ?? '').trim(),
+    buyer: String(r['Buyer'] ?? '').trim(),
+    seller: String(r['Seller'] ?? '').trim(),
+    qty: toNum(r['Quantity']),
+    rate: toNum(r['Rate']),
+    amt: toNum(r['Amount']),
+    _source: r.__source || ''
+  };
+}
+
+function computeAll(){
+  // Filter valid
+  const rows = rawRows.filter(r => r.symbol && r.qty>0 && r.amt>=0);
+
+  // Market KPIs
+  const totalTrades = rows.length;
+  let totalQty=0, totalAmt=0;
+  const amounts = [];
+  for(const r of rows){ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
+
+  amounts.sort((a,b)=>a-b);
+  const p50 = amounts.length ? amounts[Math.floor(amounts.length*0.50)] : 0;
+  const p90 = amounts.length ? amounts[Math.floor(amounts.length*0.90)] : 0;
+  const p99 = amounts.length ? amounts[Math.floor(amounts.length*0.99)] : 0;
+
+  // Liquidity Quality score (simple): more broad activity = better
+  // score = (median trade amount / p90) capped + (trades / (unique symbols * 10)) capped, average.
+  const uniqSyms = new Set(rows.map(r=>r.symbol)).size || 1;
+  const score1 = p90 ? clamp(p50/p90, 0, 1) : 0;
+  const score2 = clamp(totalTrades/(uniqSyms*10), 0, 1);
+  const liqScore = (score1 + score2)/2;
+
+  setKPI('kpiTurnover', totalAmt, 'kpiTurnoverSub', `Across ${fmt0.format(uniqSyms)} symbols`);
+  setKPI('kpiVolume', totalQty, 'kpiVolumeSub', `Avg trade qty: ${fmt0.format(totalTrades? totalQty/totalTrades : 0)}`);
+  setKPI('kpiTrades', totalTrades, 'kpiTradesSub', `Median trade amount: ${fmt1.format(p50)}`);
+  document.getElementById('kpiLiquidity').textContent = `${fmt1.format(pct(liqScore))}%`;
+  document.getElementById('kpiLiquiditySub').textContent = `Quality proxy (broad vs concentrated)`;
+
+  // Big trade threshold (global) based on percentiles
+  const qIndex = Math.floor(amounts.length * bigTradeThreshold);
+  const bigCut = amounts.length ? amounts[Math.min(amounts.length-1, qIndex)] : Infinity;
+
+  // Concentration: top 10 trades share
+  const top10 = [...amounts].sort((a,b)=>b-a).slice(0,10).reduce((s,v)=>s+v,0);
+  const top10Share = totalAmt ? top10/totalAmt : 0;
+
+  // Per symbol aggregation + microstructure
+  const bySym = new Map();
+  for(const r of rows){
+    if(!bySym.has(r.symbol)){
+      bySym.set(r.symbol, {
+        symbol:r.symbol,
+        trades:0, qty:0, amt:0,
+        hi:-Infinity, lo:Infinity,
+        buyerQty:new Map(), sellerQty:new Map(),
+        rateQty:new Map(), // volume-by-price
+        tradeAmounts:[],
+        bigAmt:0, bigTrades:0,
+        ratesSet:new Set()
+      });
+    }
+    const o = bySym.get(r.symbol);
+    o.trades += 1;
+    o.qty += r.qty;
+    o.amt += r.amt;
+    o.hi = Math.max(o.hi, r.rate);
+    o.lo = Math.min(o.lo, r.rate);
+    o.tradeAmounts.push(r.amt);
+    o.ratesSet.add(r.rate);
+    o.rateQty.set(r.rate, (o.rateQty.get(r.rate)||0) + r.qty);
+    o.buyerQty.set(r.buyer, (o.buyerQty.get(r.buyer)||0) + r.qty);
+    o.sellerQty.set(r.seller, (o.sellerQty.get(r.seller)||0) + r.qty);
+    if(r.amt >= bigCut){ o.bigAmt += r.amt; o.bigTrades += 1; }
+  }
+
+  // Pressure, VWAP, modal price share, etc.
+  stocks = Array.from(bySym.values()).map(o=>{
+    const vwap = o.qty ? o.amt/o.qty : 0;
+    const buyArr = Array.from(o.buyerQty.values()).sort((a,b)=>b-a);
+    const sellArr = Array.from(o.sellerQty.values()).sort((a,b)=>b-a);
+    const top5Buy = buyArr.slice(0,5).reduce((s,v)=>s+v,0);
+    const top5Sell = sellArr.slice(0,5).reduce((s,v)=>s+v,0);
+    const buyShare = o.qty ? top5Buy/o.qty : 0;
+    const sellShare = o.qty ? top5Sell/o.qty : 0;
+    const pressure = buyShare - sellShare;
+
+    // modal price share (volume at most traded price)
+    let modalQty = 0;
+    for(const v of o.rateQty.values()) modalQty = Math.max(modalQty, v);
+    const modalRateShare = o.qty ? modalQty/o.qty : 0;
+    const ratesCount = o.ratesSet.size;
+
+    const rangePct = vwap ? (o.hi - o.lo)/vwap : 0;
+    const bigTradeShare = o.amt ? o.bigAmt/o.amt : 0;
+
+    // turnover rank flag (top 20%)
+    return {
+      symbol:o.symbol,
+      trades:o.trades,
+      qty:o.qty,
+      amount:o.amt,
+      vwap,
+      high:o.hi===-Infinity?0:o.hi,
+      low:o.lo===Infinity?0:o.lo,
+      rangePct,
+      pressure,
+      bigTradeShare,
+      ratesCount,
+      modalRateShare,
+      signal: ''
+    };
+  });
+
+  // Rank turnover to decide strong accumulation tag
+  const byAmt = [...stocks].sort((a,b)=>b.amount-a.amount);
+  const cutoff = byAmt.length ? byAmt[Math.max(0, Math.floor(byAmt.length*0.2)-1)].amount : 0;
+  for(const s of stocks){
+    const isTopTurnover = cutoff>0 && s.amount >= cutoff;
+    const manipulationRisk = (s.modalRateShare >= 0.45 && s.ratesCount <= 3 && s.trades >= 10); // heuristic
+    if(manipulationRisk) s.signal = 'Manipulation Risk';
+    else if(s.pressure >= 0.25 && isTopTurnover) s.signal = 'Strong Accumulation';
+    else if(s.pressure <= -0.25) s.signal = 'Distribution Warning';
+    else if(s.pressure > 0) s.signal = 'Mild Accumulation';
+    else s.signal = 'Neutral';
+  }
+
+  // Brokers market aggregation + focus
+  const byBroker = new Map();
+  for(const r of rows){
+    if(r.buyer){
+      if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
+      const b = byBroker.get(r.buyer);
+      b.buyTrades += 1; b.buyQty += r.qty; b.buyAmt += r.amt;
+      b.symAmt.set(r.symbol, (b.symAmt.get(r.symbol)||0) + r.amt);
+    }
+    if(r.seller){
+      if(!byBroker.has(r.seller)) byBroker.set(r.seller, {broker:r.seller, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
+      const s = byBroker.get(r.seller);
+      s.sellTrades += 1; s.sellQty += r.qty; s.sellAmt += r.amt;
+      s.symAmt.set(r.symbol, (s.symAmt.get(r.symbol)||0) + r.amt);
+    }
+  }
+
+  brokers = Array.from(byBroker.values()).map(b=>{
+    const netQty = b.buyQty - b.sellQty;
+    const netAmt = b.buyAmt - b.sellAmt;
+    const symbols = b.symAmt.size;
+    // focus% = top3 symbol turnover / total turnover
+    const sortedSym = Array.from(b.symAmt.values()).sort((a,c)=>c-a);
+    const top3 = sortedSym.slice(0,3).reduce((s,v)=>s+v,0);
+    const total = b.buyAmt + b.sellAmt;
+    const focus = total ? top3/total : 0;
+    const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Flat');
+    return { broker:b.broker, ...b, netQty, netAmt, symbols, focus, tag };
+  });
+
+  // Stock detail storage
+  stockDetail = new Map();
+  for(const s of stocks){
+    stockDetail.set(s.symbol, { symbol:s.symbol, bigCut, rows: rows.filter(r=>r.symbol===s.symbol) });
+  }
+
+  // Render everything
+  renderMarket(top10Share, bigCut);
+  renderStocks();
+  renderRecommendations();
+  renderBrokers();
+  renderDetailInit();
+
+  // Enable exports
+  document.getElementById('btnExportStocks').disabled = false;
+  document.getElementById('btnExportBrokers').disabled = false;
+}
+
+function setKPI(id, val, subId, subText){
+  document.getElementById(id).textContent = fmt1.format(val);
+  document.getElementById(subId).textContent = subText;
+}
+
+/* -------------------- rendering: market -------------------- */
+function destroyChart(key){
+  if(charts[key]){ charts[key].destroy(); charts[key]=null; }
+}
+
+function chartBar(canvasId, key, labels, data, label){
+  destroyChart(key);
+  const ctx = document.getElementById(canvasId);
+  charts[key] = new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[{label, data}] },
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{display:true},
+        tooltip:{callbacks:{ label:(c)=> `${label}: ${fmt1.format(c.parsed.y)}` }}
+      },
+      scales:{
+        y:{ ticks:{ callback:(v)=> fmt1.format(v) } }
+      }
+    }
+  });
+}
+
+function chartDoughnut(canvasId, key, labels, data, label){
+  destroyChart(key);
+  const ctx = document.getElementById(canvasId);
+  charts[key] = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels, datasets:[{label, data}] },
+    options:{ responsive:true, plugins:{ legend:{ position:'bottom' } } }
+  });
+}
+
+function renderMarket(top10Share, bigCut){
+  // Market top symbols chart (metric switch)
+  const metric = document.getElementById('marketMetric').value;
+  const topN = Number(document.getElementById('topNMarket').value || 20);
+
+  const sorted = [...stocks].sort((a,b)=>{
+    const va = metricValue(a, metric);
+    const vb = metricValue(b, metric);
+    return vb - va;
+  }).slice(0, topN);
+
+  chartBar(
+    'chartMarketTop', 'marketTop',
+    sorted.map(d=>d.symbol),
+    sorted.map(d=>metricValue(d, metric)),
+    metricLabel(metric)
+  );
+
+  // Broker dominance chart (net qty absolute)
+  const sortedB = [...brokers].sort((a,b)=> Math.abs(b.netQty)-Math.abs(a.netQty)).slice(0,10);
+  chartBar(
+    'chartMarketBrokers', 'marketBrokers',
+    sortedB.map(d=>String(d.broker)),
+    sortedB.map(d=>d.netQty),
+    'Net Qty (Buy-Sell)'
+  );
+
+  // Big trades by symbol (share of turnover)
+  const byBig = [...stocks].sort((a,b)=>b.bigTradeShare-a.bigTradeShare).slice(0,15);
+  chartBar(
+    'chartBigTrades', 'bigTrades',
+    byBig.map(d=>d.symbol),
+    byBig.map(d=>pct(d.bigTradeShare)),
+    'Big-trade share %'
+  );
+
+  // Concentration donut: top10 trades share vs rest
+  chartDoughnut(
+    'chartConcentration', 'concentration',
+    ['Top-10 trades turnover', 'Rest of trades turnover'],
+    [pct(top10Share), pct(1-top10Share)],
+    'Turnover share'
+  );
+}
+
+function metricLabel(m){
+  return ({
+    turnover:'Turnover',
+    volume:'Volume',
+    trades:'Trades',
+    rangePct:'Range%',
+    pressure:'Pressure',
+    bigTradeShare:'Big-trade share %'
+  })[m] || m;
+}
+function metricValue(d, m){
+  if(m==='turnover') return d.amount;
+  if(m==='volume') return d.qty;
+  if(m==='trades') return d.trades;
+  if(m==='rangePct') return pct(d.rangePct);
+  if(m==='pressure') return pct(d.pressure);
+  if(m==='bigTradeShare') return pct(d.bigTradeShare);
+  return 0;
+}
+
+/* -------------------- rendering: stocks -------------------- */
+function renderStocks(){
+  // Table filters
+  const q = (document.getElementById('stockSearch').value||'').trim().toUpperCase();
+  const rankBy = document.getElementById('stockRankBy').value;
+  const minTrades = Number(document.getElementById('stockMinTrades').value||0);
+  const minTurn = Number(document.getElementById('stockMinTurn').value||0);
+
+  let rows = stocks.filter(s => s.trades>=minTrades && s.amount>=minTurn);
+  if(q) rows = rows.filter(s => s.symbol.toUpperCase().includes(q));
+
+  rows.sort((a,b)=> rankMetric(b, rankBy) - rankMetric(a, rankBy));
+
+  // Table render
+  const tbody = document.querySelector('#stocksTable tbody');
+  tbody.innerHTML = '';
+  for(const r of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.symbol}</b></td>
+      <td class="num">${fmt0.format(r.trades)}</td>
+      <td class="num">${fmt0.format(r.qty)}</td>
+      <td class="num">${fmt1.format(r.amount)}</td>
+      <td class="num">${fmt1.format(r.vwap)}</td>
+      <td class="num">${fmt1.format(r.high)}</td>
+      <td class="num">${fmt1.format(r.low)}</td>
+      <td class="num">${fmt1.format(pct(r.rangePct))}%</td>
+      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
+      <td class="num">${fmt1.format(pct(r.bigTradeShare))}%</td>
+      <td class="num">${fmt0.format(r.ratesCount)}</td>
+      <td class="num">${fmt1.format(pct(r.modalRateShare))}%</td>
+      <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
+    `;
+    tr.addEventListener('click', ()=>{
+      selectDetailSymbol(r.symbol);
+      switchTab('detail');
+    });
+    tbody.appendChild(tr);
+  }
+
+  // Heat chart
+  const hm = document.getElementById('heatMetric').value;
+  const top = [...stocks].sort((a,b)=> heatMetric(b,hm)-heatMetric(a,hm)).slice(0,20);
+  destroyChart('heat');
+  charts['heat'] = new Chart(document.getElementById('chartHeat'), {
+    type:'bar',
+    data:{
+      labels: top.map(d=>d.symbol),
+      datasets:[{ label: metricLabel2(hm), data: top.map(d=>heatMetric(d,hm)) }]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:true} },
+      scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
+    }
+  });
+}
+function rankMetric(r, m){
+  if(m==='turnover') return r.amount;
+  if(m==='volume') return r.qty;
+  if(m==='pressure') return r.pressure;
+  if(m==='rangePct') return r.rangePct;
+  if(m==='bigTradeShare') return r.bigTradeShare;
+  if(m==='ratesCount') return r.ratesCount;
+  if(m==='modalRateShare') return r.modalRateShare;
+  return r.amount;
+}
+function heatMetric(r, m){
+  if(m==='amount') return r.amount;
+  if(m==='qty') return r.qty;
+  if(m==='pressure') return pct(r.pressure);
+  if(m==='bigTradeShare') return pct(r.bigTradeShare);
+  return r.amount;
+}
+function metricLabel2(m){
+  return ({amount:'Turnover', qty:'Volume', pressure:'Pressure %', bigTradeShare:'Big-trade %'})[m] || m;
+}
+
+/* -------------------- rendering: brokers -------------------- */
+
+/* -------------------- recommendations (buy/sell candidates) -------------------- */
+function zscore(values){
+  const n = values.length || 1;
+  const mean = values.reduce((s,v)=>s+v,0)/n;
+  const varr = values.reduce((s,v)=> s + (v-mean)*(v-mean), 0)/n;
+  const sd = Math.sqrt(varr) || 1;
+  return values.map(v => (v-mean)/sd);
+}
+
+function computeRecScores(model){
+  // base inputs
+  const amounts = stocks.map(s=>s.amount);
+  const press = stocks.map(s=>s.pressure);
+  const bigs  = stocks.map(s=>s.bigTradeShare);
+
+  const zAmt = zscore(amounts);
+  const zBig = zscore(bigs);
+  // pressure is already roughly centered; still z it
+  const zPr  = zscore(press);
+
+  const buy = [];
+  const sell = [];
+
+  for(let i=0;i<stocks.length;i++){
+    const s = stocks[i];
+    let wAmt=0.45, wPr=0.40, wBig=0.15; // balanced
+    if(model==='flow'){ wAmt=0.25; wPr=0.60; wBig=0.15; }
+    if(model==='liquidity'){ wAmt=0.65; wPr=0.25; wBig=0.10; }
+
+    // Buy score: liquidity + positive pressure + big trades
+    const buyScore = (wAmt*zAmt[i]) + (wPr*zPr[i]) + (wBig*zBig[i]);
+
+    // Sell score: liquidity + negative pressure (distribution) + big trades (can be sell blocks)
+    const sellScore = (wAmt*zAmt[i]) + (wPr*(-zPr[i])) + (wBig*zBig[i]);
+
+    buy.push({symbol:s.symbol, score:buyScore, amount:s.amount, pressure:s.pressure, big:s.bigTradeShare, signal:s.signal});
+    sell.push({symbol:s.symbol, score:sellScore, amount:s.amount, pressure:s.pressure, big:s.bigTradeShare, signal:s.signal});
+  }
+
+  // Filter: for buy, require some positive pressure; for sell, require negative pressure
+  const buyF = buy.filter(x=> x.pressure > 0);
+  const sellF = sell.filter(x=> x.pressure < 0);
+
+  buyF.sort((a,b)=> b.score-a.score);
+  sellF.sort((a,b)=> b.score-a.score);
+
+  return {buy:buyF, sell:sellF};
+}
+
+function renderRecommendations(){
+  const model = document.getElementById('recModel')?.value || 'balanced';
+  const topN = Number(document.getElementById('recTopN')?.value || 20);
+  const {buy, sell} = computeRecScores(model);
+
+  const buyT = document.querySelector('#recBuyTable tbody');
+  const sellT = document.querySelector('#recSellTable tbody');
+  if(!buyT || !sellT) return;
+
+  buyT.innerHTML = '';
+  sellT.innerHTML = '';
+
+  const buyTop = buy.slice(0, topN);
+  const sellTop = sell.slice(0, topN);
+
+  for(const r of buyTop){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.symbol}</b></td>
+      <td class="num">${fmt1.format(r.score)}</td>
+      <td class="num">${fmt1.format(r.amount)}</td>
+      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
+      <td class="num">${fmt1.format(pct(r.big))}%</td>
+      <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
+    `;
+    tr.addEventListener('click', ()=>{ selectDetailSymbol(r.symbol); switchTab('detail'); });
+    buyT.appendChild(tr);
+  }
+
+  for(const r of sellTop){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.symbol}</b></td>
+      <td class="num">${fmt1.format(r.score)}</td>
+      <td class="num">${fmt1.format(r.amount)}</td>
+      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
+      <td class="num">${fmt1.format(pct(r.big))}%</td>
+      <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
+    `;
+    tr.addEventListener('click', ()=>{ selectDetailSymbol(r.symbol); switchTab('detail'); });
+    sellT.appendChild(tr);
+  }
+}
+
+function renderBrokers(){
+  const q = (document.getElementById('brokerSearch').value||'').trim();
+  const rankBy = document.getElementById('brokerRankBy').value;
+
+  let rows = brokers;
+  if(q) rows = rows.filter(b => String(b.broker).includes(q));
+
+  rows = [...rows].sort((a,b)=> brokerMetric(b,rankBy)-brokerMetric(a,rankBy));
+
+  // Charts
+  const top = rows.slice(0,12);
+  chartBar('chartBrokersNet', 'brokersNet',
+    top.map(d=>String(d.broker)),
+    top.map(d=>d.netQty),
+    'Net Qty'
+  );
+
+  // Buy vs Sell Amount (top brokers)
+  destroyChart('brokersBuySell');
+  charts['brokersBuySell'] = new Chart(document.getElementById('chartBrokersBuySell'), {
+    type:'bar',
+    data:{
+      labels: top.map(d=>String(d.broker)),
+      datasets:[
+        {label:'Buy Amount', data: top.map(d=>d.buyAmt)},
+        {label:'Sell Amount', data: top.map(d=>d.sellAmt)}
+      ]
+    },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:true} },
+      scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
+    }
+  });
+
+  // Table
+  const tbody = document.querySelector('#brokersTable tbody');
+  tbody.innerHTML='';
+  for(const b of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${b.broker}</b></td>
+      <td class="num">${fmt0.format(b.buyTrades)}</td>
+      <td class="num">${fmt0.format(b.buyQty)}</td>
+      <td class="num">${fmt1.format(b.buyAmt)}</td>
+      <td class="num">${fmt0.format(b.sellTrades)}</td>
+      <td class="num">${fmt0.format(b.sellQty)}</td>
+      <td class="num">${fmt1.format(b.sellAmt)}</td>
+      <td class="num">${fmt0.format(b.netQty)}</td>
+      <td class="num">${fmt1.format(b.netAmt)}</td>
+      <td class="num">${fmt0.format(b.symbols)}</td>
+      <td class="num">${fmt1.format(pct(b.focus))}%</td>
+      <td><span class="pill ${b.netQty>0?'good':(b.netQty<0?'bad':'')}">${b.tag}</span></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+function brokerMetric(b, m){
+  if(m==='netQty') return Math.abs(b.netQty);
+  if(m==='buyQty') return b.buyQty;
+  if(m==='sellQty') return b.sellQty;
+  if(m==='netAmt') return Math.abs(b.netAmt);
+  if(m==='symbols') return b.symbols;
+  if(m==='focus') return b.focus;
+  return Math.abs(b.netQty);
+}
+
+/* -------------------- rendering: stock detail -------------------- */
+function renderDetailInit(){
+  const sel = document.getElementById('detailSymbol');
+  sel.innerHTML='';
+  const sorted = [...stocks].sort((a,b)=>b.amount-a.amount);
+  for(const s of sorted){
+    const opt = document.createElement('option');
+    opt.value = s.symbol;
+    opt.textContent = `${s.symbol} (turnover ${fmt1.format(s.amount)})`;
+    sel.appendChild(opt);
+  }
+  if(sorted.length) selectDetailSymbol(sorted[0].symbol);
+}
+
+function selectDetailSymbol(symbol){
+  const sel = document.getElementById('detailSymbol');
+  sel.value = symbol;
+  renderDetail(symbol);
+}
+
+function renderDetail(symbol){
+  const obj = stockDetail.get(symbol);
+  if(!obj) return;
+  const rows = obj.rows;
+
+  // Big cutoff for this view
+  const pctSel = Number(document.getElementById('detailBigPct').value || 0.99);
+  const amts = rows.map(r=>r.amt).sort((a,b)=>a-b);
+  const idx = Math.floor(amts.length * pctSel);
+  const cut = amts.length ? amts[Math.min(amts.length-1, idx)] : Infinity;
+
+  // Volume-by-price
+  const volByPrice = new Map();
+  const buyers = new Map();
+  const sellers = new Map();
+  const net = new Map();
+  const tradeSizes = [];
+
+  for(const r of rows){
+    volByPrice.set(r.rate, (volByPrice.get(r.rate)||0) + r.qty);
+    buyers.set(r.buyer, (buyers.get(r.buyer)||0) + r.qty);
+    sellers.set(r.seller, (sellers.get(r.seller)||0) + r.qty);
+    net.set(r.buyer, (net.get(r.buyer)||0) + r.qty);
+    net.set(r.seller, (net.get(r.seller)||0) - r.qty);
+    tradeSizes.push(r.qty);
+  }
+
+  const priceLevels = Array.from(volByPrice.entries()).sort((a,b)=>a[0]-b[0]);
+  // show up to 25 bins: if too many levels, bucketize by rounding to 0.1
+  let labels = priceLevels.map(x=>String(x[0]));
+  let vals = priceLevels.map(x=>x[1]);
+  if(labels.length > 25){
+    const bucket = new Map();
+    for(const [p,v] of priceLevels){
+      const b = (Math.round(p*10)/10).toFixed(1);
+      bucket.set(b, (bucket.get(b)||0)+v);
+    }
+    const arr = Array.from(bucket.entries()).sort((a,b)=>Number(a[0])-Number(b[0]));
+    labels = arr.map(x=>x[0]);
+    vals = arr.map(x=>x[1]);
+  }
+  chartBar('chartVolByPrice', 'volByPrice', labels, vals, 'Qty at price');
+
+  // Top buyers/sellers
+  const topBuy = Array.from(buyers.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const topSell = Array.from(sellers.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  chartBar('chartTopBuyers', 'topBuyers', topBuy.map(x=>String(x[0])), topBuy.map(x=>x[1]), 'Buy Qty');
+  chartBar('chartTopSellers', 'topSellers', topSell.map(x=>String(x[0])), topSell.map(x=>x[1]), 'Sell Qty');
+
+  // Net by broker (top abs)
+  const topNet = Array.from(net.entries()).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,12);
+  chartBar('chartNetByBroker', 'netByBroker', topNet.map(x=>String(x[0])), topNet.map(x=>x[1]), 'Net Qty');
+
+  // Trade size distribution (histogram bins)
+  tradeSizes.sort((a,b)=>a-b);
+  const bins = 10;
+  const min = tradeSizes[0] || 0;
+  const max = tradeSizes[tradeSizes.length-1] || 0;
+  const step = (max-min)/bins || 1;
+  const h = new Array(bins).fill(0);
+  for(const v of tradeSizes){
+    const idx = Math.min(bins-1, Math.floor((v-min)/step));
+    h[idx] += 1;
+  }
+  const hLabels = h.map((_,i)=> `${fmt0.format(min + i*step)}–${fmt0.format(min + (i+1)*step)}`);
+  destroyChart('tradeSize');
+  charts['tradeSize'] = new Chart(document.getElementById('chartTradeSize'), {
+    type:'bar',
+    data:{ labels: hLabels, datasets:[{label:'#Trades', data:h}] },
+    options:{ responsive:true, plugins:{ legend:{display:true} }, scales:{ y:{ ticks:{ callback:(v)=> fmt0.format(v) } } } }
+  });
+
+  // Big trades table
+  const big = rows.filter(r=>r.amt>=cut).sort((a,b)=>b.amt-a.amt).slice(0,25);
+  const tbody = document.querySelector('#bigTradesTable tbody');
+  tbody.innerHTML = '';
+  for(const r of big){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.txn}</td>
+      <td>${r.buyer}</td>
+      <td>${r.seller}</td>
+      <td class="num">${fmt0.format(r.qty)}</td>
+      <td class="num">${fmt1.format(r.rate)}</td>
+      <td class="num">${fmt1.format(r.amt)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Microstructure flags (heuristics)
+  const distinctRates = new Set(rows.map(r=>r.rate)).size;
+  const rateQty = new Map();
+  for(const r of rows) rateQty.set(r.rate, (rateQty.get(r.rate)||0)+r.qty);
+  let modalQty = 0, modalRate = null, totalQty=0;
+  for(const [p,v] of rateQty.entries()){ totalQty += v; if(v>modalQty){ modalQty=v; modalRate=p; } }
+  const modalShare = totalQty ? modalQty/totalQty : 0;
+  const avgTradeQty = totalQty ? totalQty/rows.length : 0;
+
+  const flags = [];
+  if(modalShare >= 0.45 && distinctRates <= 3) flags.push(`⚠️ <b>Price concentration</b>: ${fmt1.format(pct(modalShare))}% volume at one price (${modalRate}).`);
+  if(distinctRates >= 12) flags.push(`✅ <b>Organic price discovery</b>: many price levels (${distinctRates}).`);
+  const smallTrades = rows.filter(r=>r.qty <= Math.max(5, avgTradeQty*0.15)).length;
+  if(rows.length && smallTrades/rows.length >= 0.55) flags.push(`⚠️ <b>Many small trades</b>: ${fmt1.format(pct(smallTrades/rows.length))}% trades are small (possible tape noise).`);
+  if(big.length >= 3) flags.push(`✅ <b>Big trades present</b>: ${big.length} big trades (>= ${fmt1.format(cut)} amount).`);
+
+  document.getElementById('microFlags').innerHTML = flags.length ? flags.map(x=>`• ${x}`).join('<br/>') : 'No strong microstructure flags based on current heuristics.';
+}
+
+/* -------------------- events -------------------- */
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.tab===name));
+  document.getElementById('tab-market').classList.toggle('hidden', name!=='market');
+  document.getElementById('tab-stocks').classList.toggle('hidden', name!=='stocks');
+  document.getElementById('tab-brokers').classList.toggle('hidden', name!=='brokers');
+  document.getElementById('tab-detail').classList.toggle('hidden', name!=='detail');
+}
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click', ()=> switchTab(t.dataset.tab));
+});
+
+document.getElementById('marketMetric').addEventListener('change', ()=> renderMarket());
+document.getElementById('topNMarket').addEventListener('change', ()=> renderMarket());
+document.getElementById('bigTradePct').addEventListener('change', ()=>{
+  bigTradeThreshold = Number(document.getElementById('bigTradePct').value || 0.99);
+  computeAll();
+});
+
+document.getElementById('stockSearch').addEventListener('input', renderStocks);
+document.getElementById('stockRankBy').addEventListener('change', renderStocks);
+document.getElementById('stockMinTrades').addEventListener('change', renderStocks);
+document.getElementById('stockMinTurn').addEventListener('change', renderStocks);
+document.getElementById('heatMetric').addEventListener('change', renderStocks);
+
+document.getElementById('recModel')?.addEventListener('change', renderRecommendations);
+document.getElementById('recTopN')?.addEventListener('change', renderRecommendations);
+
+
+document.getElementById('brokerSearch').addEventListener('input', renderBrokers);
+document.getElementById('brokerRankBy').addEventListener('change', renderBrokers);
+
+document.getElementById('detailSymbol').addEventListener('change', (e)=> renderDetail(e.target.value));
+document.getElementById('detailBigPct').addEventListener('change', ()=> renderDetail(document.getElementById('detailSymbol').value));
+
+/* Export buttons */
+document.getElementById('btnExportStocks').addEventListener('click', ()=>{
+  const header = ['Symbol','Trades','Qty','Turnover','VWAP','High','Low','RangePct','PressurePct','BigTradePct','#Rates','ModalPct','Signal'];
+  const lines = [header.join(',')];
+  for(const s of stocks){
+    lines.push([
+      s.symbol, s.trades, s.qty, s.amount, s.vwap, s.high, s.low,
+      s.rangePct, s.pressure, s.bigTradeShare, s.ratesCount, s.modalRateShare, `"${s.signal}"`
+    ].join(','));
+  }
+  downloadText('stocks_summary.csv', lines.join('\n'));
+});
+
+document.getElementById('btnExportBrokers').addEventListener('click', ()=>{
+  const header = ['Broker','BuyTrades','BuyQty','BuyAmount','SellTrades','SellQty','SellAmount','NetQty','NetAmount','Symbols','Focus','Tag'];
+  const lines = [header.join(',')];
+  for(const b of brokers){
+    lines.push([
+      b.broker, b.buyTrades, b.buyQty, b.buyAmt,
+      b.sellTrades, b.sellQty, b.sellAmt,
+      b.netQty, b.netAmt, b.symbols, b.focus, `"${b.tag}"`
+    ].join(','));
+  }
+  downloadText('brokers_summary.csv', lines.join('\n'));
+});
+
+/* File input / drop */
+const drop = document.getElementById('dropZone');
+const input = document.getElementById('fileInput');
+drop.addEventListener('click', ()=> input.click());
+drop.addEventListener('dragover', (e)=>{ e.preventDefault(); drop.style.opacity=0.85; });
+drop.addEventListener('dragleave', ()=>{ drop.style.opacity=1; });
+drop.addEventListener('drop', (e)=>{
+  e.preventDefault(); drop.style.opacity=1;
+  const files = e.dataTransfer.files;
+  if(files && files.length) loadFiles(files);
+});
+input.addEventListener('change', (e)=>{
+  const files = e.target.files;
+  if(files && files.length) loadFiles(files);
+});
+
+function loadFiles(fileList){
+  rawRows = [];
+  const files = Array.from(fileList);
+  let done = 0;
+
+  files.forEach(file=>{
+    Papa.parse(file, {
+      header:true,
+      skipEmptyLines:true,
+      complete:(res)=>{
+        const rows = (res.data || []).map(r=> ({...r, __source: file.name}));
+        const required = ['Symbol','Buyer','Seller','Quantity','Rate','Amount'];
+        for(const k of required){
+          if(!(k in rows[0])){
+            alert('Missing column: ' + k + '\nExpected columns: Transact No., Symbol, Buyer, Seller, Quantity, Rate, Amount');
+            return;
+          }
+        }
+        rawRows.push(...rows.map(normalizeRow));
+        done += 1;
+        if(done === files.length){
+          // Default big trade threshold uses selector in Market tab
+          bigTradeThreshold = Number(document.getElementById('bigTradePct').value || 0.99);
+          computeAll();
+        }
+      }
+    });
+  });
+}
+
+
+/* -------------------- multi-day loader for GitHub Pages -------------------- */
+/*
+Expected structure (GitHub Pages):
+docs/
+  index.html
+  data/
+    index.json        -> list of available daily files (date + file)
+    floorsheet_YYYY-MM-DD.csv
+    ...
+index.json format:
+{
+  "files":[ {"date":"2026-01-11","file":"data/floorsheet_2026-01-11.csv"}, ... ],
+  "latest":"2026-01-11"
+}
+*/
+
+async function fetchIndex(){
+  const res = await fetch("data/index.json", {cache:"no-store"});
+  if(!res.ok) throw new Error("index.json not found (data/index.json).");
+  return await res.json();
+}
+
+function parseDate(s){ return new Date(s + "T00:00:00"); }
+function fmtDate(d){
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const da=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${da}`;
+}
+
+function chooseFiles(indexObj){
+  const files = indexObj.files || [];
+  if(!files.length) return [];
+  const mode = document.getElementById('modeSelect')?.value || 'rolling';
+  const tf = document.getElementById('tfSelect')?.value || '7';
+
+  // ensure inputs exist
+  const fromEl = document.getElementById('dateFrom');
+  const toEl = document.getElementById('dateTo');
+
+  // default date inputs to latest range
+  const latestDate = indexObj.latest || files[files.length-1].date;
+  const latest = parseDate(latestDate);
+  if(fromEl && !fromEl.value) fromEl.value = fmtDate(new Date(latest.getTime() - 6*86400000));
+  if(toEl && !toEl.value) toEl.value = latestDate;
+
+  let chosen = [];
+  if(mode === 'range'){
+    const from = parseDate(fromEl.value);
+    const to = parseDate(toEl.value);
+    chosen = files.filter(f=>{
+      const d = parseDate(f.date);
+      return d >= from && d <= to;
+    });
+  } else {
+    if(tf === 'all') chosen = files.slice();
+    else {
+      const n = Number(tf);
+      chosen = files.slice(Math.max(0, files.length - n));
+    }
+  }
+  return chosen;
+}
+
+async function loadCsvUrl(url){
+  const res = await fetch(url, {cache:"no-store"});
+  if(!res.ok) throw new Error("Failed to load: " + url);
+  const text = await res.text();
+  return await new Promise((resolve)=>{
+    Papa.parse(text, {
+      header:true, skipEmptyLines:true,
+      complete:(out)=>{
+        const rows = (out.data || []).map(r=> ({...r, __source: url}));
+        resolve(rows);
+      }
+    });
+  });
+}
+
+async function loadFromIndex(){
+  try{
+    const hint = document.getElementById('multiHint');
+    if(hint) hint.textContent = "Loading index.json…";
+    const idxObj = await fetchIndex();
+    const chosen = chooseFiles(idxObj);
+
+    if(!chosen.length){
+      if(hint) hint.textContent = "No files selected (check timeframe / date range).";
+      return;
+    }
+
+    if(hint) hint.textContent = `Loading ${chosen.length} day(s)…`;
+    const all = [];
+    for(const f of chosen){
+      const rows = await loadCsvUrl(f.file);
+      all.push(...rows.map(normalizeRow));
+    }
+    rawRows = all;
+    bigTradeThreshold = Number(document.getElementById('bigTradePct')?.value || 0.99);
+    computeAll();
+
+    if(hint){
+      const start = chosen[0].date;
+      const end = chosen[chosen.length-1].date;
+      hint.textContent = `Loaded ${chosen.length} day(s): ${start} → ${end} (combined rows: ${fmt0.format(rawRows.length)})`;
+    }
+  }catch(e){
+    console.log(e);
+    const hint = document.getElementById('multiHint');
+    if(hint){
+      hint.innerHTML = `Could not auto-load multi-day data. <b>Fix:</b> create <code>docs/data/index.json</code> in your repo (GitHub Pages).<br/>Error: ${String(e.message||e)}`;
+    }
+  }
+}
+
+// Hook controls
+document.getElementById('btnReloadIndex')?.addEventListener('click', loadFromIndex);
+document.getElementById('tfSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
+document.getElementById('modeSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel());
+  const mode = document.getElementById('modeSelect').value;
+  const show = (mode==='range');
+  document.getElementById('dateFrom').style.display = show ? 'inline-block':'none';
+  document.getElementById('dateTo').style.display = show ? 'inline-block':'none';
+
+/* -------------------- visible selected period badge -------------------- */
+function updatePeriodBadge(label){
+  const el = document.getElementById('periodBadge');
+  if(!el) return;
+  el.textContent = "Period: " + label;
+}
+
+function currentPeriodLabel(){
+  const tf = document.getElementById('tfSelect')?.value;
+  const mode = document.getElementById('modeSelect')?.value;
+  if(mode === 'range'){
+    const f = document.getElementById('dateFrom')?.value;
+    const t = document.getElementById('dateTo')?.value;
+    if(f && t) return `${f} → ${t}`;
+    return 'Custom range';
+  }
+  if(tf === '1') return '1 Day';
+  if(tf === '7') return '7 Days';
+  if(tf === '15') return '15 Days';
+  if(tf === '30') return '1 Month';
+  if(tf === '90') return '3 Months';
+  if(tf === '180') return '6 Months';
+  if(tf === '365') return '1 Year';
+  if(tf === 'all') return 'All Available';
+  return 'Auto';
+}
+
+  updatePeriodBadge(currentPeriodLabel());
+  loadFromIndex();
+});
+document.getElementById('dateFrom')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
+document.getElementById('dateTo')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
+
+// Hide date inputs initially if rolling mode
+(function(){
+  const mode = document.getElementById('modeSelect')?.value || 'rolling';
+  const show = (mode==='range');
+  const df = document.getElementById('dateFrom');
+  const dt = document.getElementById('dateTo');
+  if(df) df.style.display = show ? 'inline-block':'none';
+  if(dt) dt.style.display = show ? 'inline-block':'none';
+})();
+
+
+/* default view without data */
+(function init(){
+  document.getElementById('kpiTurnoverSub').textContent = 'Load a CSV to compute';
+  document.getElementById('kpiVolumeSub').textContent = 'Load a CSV to compute';
+  document.getElementById('kpiTradesSub').textContent = 'Load a CSV to compute';
+  document.getElementById('kpiLiquiditySub').textContent = 'Load a CSV to compute';
+  // Attempt auto multi-day load (GitHub Pages)
+
+/* -------------------- visible selected period badge -------------------- */
+function updatePeriodBadge(label){
+  const el = document.getElementById('periodBadge');
+  if(!el) return;
+  el.textContent = "Period: " + label;
+}
+
+function currentPeriodLabel(){
+  const tf = document.getElementById('tfSelect')?.value;
+  const mode = document.getElementById('modeSelect')?.value;
+  if(mode === 'range'){
+    const f = document.getElementById('dateFrom')?.value;
+    const t = document.getElementById('dateTo')?.value;
+    if(f && t) return `${f} → ${t}`;
+    return 'Custom range';
+  }
+  if(tf === '1') return '1 Day';
+  if(tf === '7') return '7 Days';
+  if(tf === '15') return '15 Days';
+  if(tf === '30') return '1 Month';
+  if(tf === '90') return '3 Months';
+  if(tf === '180') return '6 Months';
+  if(tf === '365') return '1 Year';
+  if(tf === 'all') return 'All Available';
+  return 'Auto';
+}
+
+  updatePeriodBadge(currentPeriodLabel());
+  loadFromIndex();
+})();
+</script>
+</body>
+</html>
