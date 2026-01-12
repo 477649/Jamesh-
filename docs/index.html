@@ -125,7 +125,7 @@
     .span8{ grid-column: span 8; }
     .span12{ grid-column: span 12; }
 
-    canvas{ max-height: 340px; }
+    canvas{display:block; width:100% !important; height:340px !important;}
     table{
       width:100%;
       border-collapse: collapse;
@@ -529,12 +529,68 @@ th{ background:#f8fafc; }
       </div>
     </div>
 
+
+      <!-- Broker -> Symbol Detail (individual level) -->
+      <div class="card panel" style="margin-top:14px;">
+        <div class="row">
+          <h2>Broker → Symbol Detail (individual level)</h2>
+          <div class="controls" style="flex-wrap:wrap;">
+            <span class="pill" id="brokerSymbolSelected" style="background:rgba(245,158,11,.15); color:#92400e; border:1px solid rgba(245,158,11,.35);">Selected broker: —</span>
+            <input id="brokerSymbolQuery" placeholder="Search symbol in this broker" />
+            <select id="brokerSymbolRankBy">
+              <option value="absNetAmt" selected>Rank: |Net Amount|</option>
+              <option value="absNetQty">Rank: |Net Qty|</option>
+              <option value="buyAmt">Rank: Buy Amount</option>
+              <option value="sellAmt">Rank: Sell Amount</option>
+              <option value="turnover">Rank: Turnover (Buy+Sell)</option>
+            </select>
+            <select id="brokerSymbolTopN">
+              <option value="10">Top 10</option>
+              <option value="20" selected>Top 20</option>
+              <option value="50">Top 50</option>
+              <option value="9999">All</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="hint" style="margin-top:6px;">
+          Click any <b>broker row</b> in the table above to populate this table. It shows which <b>stocks (symbols)</b> that broker bought/sold today.
+          <b>Net%</b> = Net Amount / (Buy Amount + Sell Amount).
+        </div>
+
+        <div style="overflow:auto; margin-top:10px;">
+          <table class="tbl" id="brokerSymbolDetailTable">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="num">Buy Trades</th>
+                <th class="num">Buy Qty</th>
+                <th class="num">Buy Amount</th>
+                <th class="num">Sell Trades</th>
+                <th class="num">Sell Qty</th>
+                <th class="num">Sell Amount</th>
+                <th class="num">Net Qty</th>
+                <th class="num">Net Amount</th>
+                <th class="num">Net%</th>
+                <th>Tag</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="11" style="color:var(--muted); padding:12px;">Select a broker above to view symbol-wise details.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
     <!-- STOCK DETAIL -->
     <div id="tab-detail" class="grid hidden">
       <div class="card panel">
         <div class="row">
           <h2>Stock Detail (choose a symbol)</h2>
           <div class="controls">
+            <input id="detailSymbolSearch" placeholder="Search symbol (e.g., ICFC)" list="symbolsDatalist" />
+            <datalist id="symbolsDatalist"></datalist>
             <select id="detailSymbol"></select>
             <select id="detailBigPct">
               <option value="0.95">Big trades: top 5% amount</option>
@@ -721,18 +777,20 @@ function computeAll(){
     if (r.buyer && r.symbol){
       if(!brokerSymAgg.has(r.buyer)) brokerSymAgg.set(r.buyer, new Map());
       const m = brokerSymAgg.get(r.buyer);
-      if(!m.has(r.symbol)) m.set(r.symbol, {buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
+      if(!m.has(r.symbol)) m.set(r.symbol, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
       const o = m.get(r.symbol);
       o.buyQty += r.qty; o.buyAmt += r.amt;
+      o.buyTrades += 1;
       o.netQty += r.qty; o.netAmt += r.amt;
     }
     // Seller side
     if (r.seller && r.symbol){
       if(!brokerSymAgg.has(r.seller)) brokerSymAgg.set(r.seller, new Map());
       const m = brokerSymAgg.get(r.seller);
-      if(!m.has(r.symbol)) m.set(r.symbol, {buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
+      if(!m.has(r.symbol)) m.set(r.symbol, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
       const o = m.get(r.symbol);
       o.sellQty += r.qty; o.sellAmt += r.amt;
+      o.sellTrades += 1;
       o.netQty -= r.qty; o.netAmt -= r.amt;
     }
 
@@ -899,6 +957,14 @@ function setKPI(id, val, subId, subText){
 }
 
 /* -------------------- rendering: market -------------------- */
+// ✅ High-DPI / anti-blur fix for Chart.js canvases (crisp visuals)
+const __DPR__ = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+if (window.Chart && Chart.defaults){
+  Chart.defaults.devicePixelRatio = __DPR__;
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
+}
+
 function destroyChart(key){
   if(charts[key]){ charts[key].destroy(); charts[key]=null; }
 }
@@ -911,6 +977,8 @@ function chartBar(canvasId, key, labels, data, label){
     data:{ labels, datasets:[{label, data}] },
     options:{
       responsive:true,
+      maintainAspectRatio:false,
+      devicePixelRatio: __DPR__,
       plugins:{
         legend:{display:true},
         tooltip:{callbacks:{ label:(c)=> `${label}: ${fmt1.format(c.parsed.y)}` }}
@@ -1052,6 +1120,8 @@ function renderStocks(){
     },
     options:{
       responsive:true,
+      maintainAspectRatio:false,
+      devicePixelRatio: __DPR__,
       plugins:{ legend:{display:true} },
       scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
     }
@@ -1180,6 +1250,29 @@ function renderBrokers(){
   
   const symQ = (document.getElementById('brokerSymbolSearch')?.value || '').trim().toUpperCase();
 let rows = brokers;
+  // ✅ Optional: filter brokers by a single symbol (today-only drilldown)
+  if(symQ){
+    const bySym = [];
+    for(const [broker, m] of brokerSymAgg.entries()){
+      const o = m.get(symQ);
+      if(!o) continue;
+      bySym.push({
+        broker,
+        buyTrades: o.buyTrades||0,
+        buyQty: o.buyQty||0,
+        buyAmt: o.buyAmt||0,
+        sellTrades: o.sellTrades||0,
+        sellQty: o.sellQty||0,
+        sellAmt: o.sellAmt||0,
+        netQty: (o.netQty||0),
+        netAmt: (o.netAmt||0),
+        // focus not meaningful for single-symbol view; keep 100% for matched brokers
+        symbols: 1,
+        focus: 1
+      });
+    }
+    rows = bySym;
+  }
   if(q) rows = rows.filter(b => String(b.broker).includes(q));
 
   rows = [...rows].sort((a,b)=> brokerMetric(b,rankBy)-brokerMetric(a,rankBy));
@@ -1205,6 +1298,8 @@ let rows = brokers;
     },
     options:{
       responsive:true,
+      maintainAspectRatio:false,
+      devicePixelRatio: __DPR__,
       plugins:{ legend:{display:true} },
       scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
     }
@@ -1229,9 +1324,98 @@ let rows = brokers;
       <td class="num">${fmt1.format(pct(b.focus))}%</td>
       <td><span class="pill ${b.netQty>0?'good':(b.netQty<0?'bad':'')}">${b.tag}</span></td>
     `;
+    tr.addEventListener('click', ()=>{ setSelectedBrokerForSymbolDetail(String(b.broker)); });
     tbody.appendChild(tr);
   }
 }
+
+
+// -------------------- Broker -> Symbol Detail (inline) --------------------
+let selectedBrokerForSymbolDetail = null;
+
+function setSelectedBrokerForSymbolDetail(brokerCode){
+  selectedBrokerForSymbolDetail = String(brokerCode);
+  const badge = document.getElementById('brokerSymbolSelected');
+  if(badge) badge.textContent = `Selected broker: ${selectedBrokerForSymbolDetail}`;
+  renderBrokerSymbolDetail();
+  // scroll into view for convenience
+  const tbl = document.getElementById('brokerSymbolDetailTable');
+  if(tbl) tbl.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function brokerSymRankVal(r, mode){
+  const buyAmt = r.buyAmt||0, sellAmt = r.sellAmt||0, netAmt = r.netAmt||0, netQty = r.netQty||0;
+  if(mode==='absNetAmt') return Math.abs(netAmt);
+  if(mode==='absNetQty') return Math.abs(netQty);
+  if(mode==='buyAmt') return buyAmt;
+  if(mode==='sellAmt') return sellAmt;
+  if(mode==='turnover') return buyAmt + sellAmt;
+  return Math.abs(netAmt);
+}
+
+function renderBrokerSymbolDetail(){
+  const tbody = document.querySelector('#brokerSymbolDetailTable tbody');
+  const q = (document.getElementById('brokerSymbolQuery')?.value || '').trim().toUpperCase();
+  const rankBy = (document.getElementById('brokerSymbolRankBy')?.value || 'absNetAmt');
+  const topN = Number(document.getElementById('brokerSymbolTopN')?.value || 20);
+
+  if(!selectedBrokerForSymbolDetail){
+    if(tbody) tbody.innerHTML = '<tr><td colspan="11" style="color:var(--muted); padding:12px;">Select a broker above to view symbol-wise details.</td></tr>';
+    return;
+  }
+
+  const m = brokerSymAgg.get(String(selectedBrokerForSymbolDetail));
+  if(!m || m.size===0){
+    if(tbody) tbody.innerHTML = `<tr><td colspan="11" style="color:var(--muted); padding:12px;">Broker ${selectedBrokerForSymbolDetail}: no symbol data.</td></tr>`;
+    return;
+  }
+
+  let arr = Array.from(m.entries()).map(([symbol, o])=>({symbol, ...o}));
+  if(q) arr = arr.filter(r => String(r.symbol||'').toUpperCase().includes(q));
+
+  arr.sort((a,b)=> brokerSymRankVal(b, rankBy) - brokerSymRankVal(a, rankBy));
+
+  const shown = (topN>=9999) ? arr : arr.slice(0, topN);
+
+  if(!tbody) return;
+  tbody.innerHTML = '';
+  for(const r of shown){
+    const buyAmt = r.buyAmt||0, sellAmt = r.sellAmt||0, netAmt = r.netAmt||0;
+    const denom = (buyAmt + sellAmt) || 0;
+    const netPct = denom ? (netAmt/denom) : 0;
+
+    let tag = 'NEUTRAL';
+    let cls = '';
+    if(netAmt > 0){ tag = 'NET BUY'; cls = 'good'; }
+    else if(netAmt < 0){ tag = 'NET SELL'; cls = 'bad'; }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.symbol}</b></td>
+      <td class="num">${fmt0.format(r.buyTrades||0)}</td>
+      <td class="num">${fmt0.format(r.buyQty||0)}</td>
+      <td class="num">${fmt1.format(buyAmt)}</td>
+      <td class="num">${fmt0.format(r.sellTrades||0)}</td>
+      <td class="num">${fmt0.format(r.sellQty||0)}</td>
+      <td class="num">${fmt1.format(sellAmt)}</td>
+      <td class="num">${fmt0.format(r.netQty||0)}</td>
+      <td class="num">${fmt1.format(netAmt)}</td>
+      <td class="num">${fmt1.format(pct(netPct))}%</td>
+      <td><span class="pill ${cls}">${tag}</span></td>
+    `;
+    tr.addEventListener('click', ()=>{
+      selectDetailSymbol(r.symbol);
+      switchTab('detail');
+    });
+    tbody.appendChild(tr);
+  }
+}
+
+// Wire controls
+document.getElementById('brokerSymbolQuery')?.addEventListener('input', renderBrokerSymbolDetail);
+document.getElementById('brokerSymbolRankBy')?.addEventListener('change', renderBrokerSymbolDetail);
+document.getElementById('brokerSymbolTopN')?.addEventListener('change', renderBrokerSymbolDetail);
+
 function brokerMetric(b, m){
   if(m==='netQty') return Math.abs(b.netQty);
   if(m==='buyQty') return b.buyQty;
@@ -1338,13 +1522,25 @@ function renderDetailInit(){
     opt.value = s.symbol;
     opt.textContent = `${s.symbol} (turnover ${fmt1.format(s.amount)})`;
     sel.appendChild(opt);
+
+    if(dl){
+      const o2 = document.createElement('option');
+      o2.value = s.symbol;
+      dl.appendChild(o2);
+    }
   }
-  if(sorted.length) selectDetailSymbol(sorted[0].symbol);
+  if(sorted.length){
+    selectDetailSymbol(sorted[0].symbol);
+    const inp = document.getElementById('detailSymbolSearch');
+    if(inp) inp.value = sorted[0].symbol;
+  }
 }
 
 function selectDetailSymbol(symbol){
   const sel = document.getElementById('detailSymbol');
+  const inp = document.getElementById('detailSymbolSearch');
   sel.value = symbol;
+  if(inp) inp.value = symbol;
   renderDetail(symbol);
 }
 
@@ -1491,6 +1687,12 @@ document.getElementById('brokerSearch').addEventListener('input', renderBrokers)
 document.getElementById('brokerSymbolSearch')?.addEventListener('input', renderBrokers);
 document.getElementById('brokerRankBy').addEventListener('change', renderBrokers);
 
+document.getElementById('detailSymbolSearch')?.addEventListener('input', (e)=>{
+  const v = (e.target.value||'').trim().toUpperCase();
+  if(!v) return;
+  // If symbol exists, jump to it
+  if(stockDetail.has(v)) selectDetailSymbol(v);
+});
 document.getElementById('detailSymbol').addEventListener('change', (e)=> renderDetail(e.target.value));
 document.getElementById('detailBigPct').addEventListener('change', ()=> renderDetail(document.getElementById('detailSymbol').value));
 
