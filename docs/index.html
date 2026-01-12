@@ -1600,35 +1600,19 @@ function fmtDate(d){
 function chooseFiles(indexObj){
   const files = indexObj.files || [];
   if(!files.length) return [];
-  const mode = document.getElementById('modeSelect')?.value || 'rolling';
-  const tf = document.getElementById('tfSelect')?.value || '7';
 
-  // ensure inputs exist
-  const fromEl = document.getElementById('dateFrom');
-  const toEl = document.getElementById('dateTo');
-
-  // default date inputs to latest range
-  const latestDate = indexObj.latest || files[files.length-1].date;
-  const latest = parseDate(latestDate);
-  if(fromEl && !fromEl.value) fromEl.value = fmtDate(new Date(latest.getTime() - 6*86400000));
-  if(toEl && !toEl.value) toEl.value = latestDate;
-
-  let chosen = [];
-  if(mode === 'range'){
-    const from = parseDate(fromEl.value);
-    const to = parseDate(toEl.value);
-    chosen = files.filter(f=>{
-      const d = parseDate(f.date);
-      return d >= from && d <= to;
-    });
-  } else {
-    if(tf === 'all') chosen = files.slice();
-    else {
-      const n = Number(tf);
-      chosen = files.slice(Math.max(0, files.length - n));
-    }
+  // ✅ Today-only mode: always load ONLY the latest available day
+  const latest = files[files.length-1];
+  // Update badge
+  const badge = document.getElementById('periodBadge');
+  if(badge){
+    badge.textContent = `Period: 1D (${indexObj.latest || latest.date})`;
+    badge.className = 'pill good';
   }
-  return chosen;
+  // Keep the selector UI in sync (optional)
+  const ps = document.getElementById('periodSelect');
+  if(ps) ps.value = '1';
+  return [latest];
 }
 
 async function loadCsvUrl(url){
