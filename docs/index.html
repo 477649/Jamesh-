@@ -522,9 +522,7 @@ th{ overflow:visible !important; text-overflow:clip !important; }
         <table id="brokersTable">
           <thead>
             <tr>
-            <th>Symbol</th>
-            
-              <th data-k="symbol">Symbol</th>
+            <th data-k="symbol">Symbol</th>
               <th data-k="broker">Broker</th>
               <th data-k="buyTrades">Buy Trades</th>
               <th data-k="buyQty">Buy Qty</th>
@@ -929,21 +927,31 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     brokerSymAgg = new Map();
 for(const r of rows){
     if(r.buyer){
-      if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
+      if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map(), symBuyTrades:new Map(), symBuyQty:new Map(), symBuyAmt:new Map(), symSellTrades:new Map(), symSellQty:new Map(), symSellAmt:new Map()});
       const b = byBroker.get(r.buyer);
       b.buyTrades += 1; b.buyQty += r.qty; b.buyAmt += r.amt;
       b.symAmt.set(r.symbol, (b.symAmt.get(r.symbol)||0) + r.amt);
-    }
+    
+      // per-symbol BUY breakdown
+      b.symBuyTrades.set(r.symbol, (b.symBuyTrades.get(r.symbol)||0) + 1);
+      b.symBuyQty.set(r.symbol, (b.symBuyQty.get(r.symbol)||0) + r.qty);
+      b.symBuyAmt.set(r.symbol, (b.symBuyAmt.get(r.symbol)||0) + r.amt);
+}
     if(r.seller){
-      if(!byBroker.has(r.seller)) byBroker.set(r.seller, {broker:r.seller, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
+      if(!byBroker.has(r.seller)) byBroker.set(r.seller, {broker:r.seller, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map(), symBuyTrades:new Map(), symBuyQty:new Map(), symBuyAmt:new Map(), symSellTrades:new Map(), symSellQty:new Map(), symSellAmt:new Map()});
       const s = byBroker.get(r.seller);
       s.sellTrades += 1; s.sellQty += r.qty; s.sellAmt += r.amt;
       s.symAmt.set(r.symbol, (s.symAmt.get(r.symbol)||0) + r.amt);
-    }
+    
+      // per-symbol SELL breakdown
+      s.symSellTrades.set(r.symbol, (s.symSellTrades.get(r.symbol)||0) + 1);
+      s.symSellQty.set(r.symbol, (s.symSellQty.get(r.symbol)||0) + r.qty);
+      s.symSellAmt.set(r.symbol, (s.symSellAmt.get(r.symbol)||0) + r.amt);
+}
   }
 
   brokers = Array.from(byBroker.values()).map(b=>{
-    const netQty = b.buyQty - b.sellQty;
+const netQty = b.buyQty - b.sellQty;
     const netAmt = b.buyAmt - b.sellAmt;
     const symbols = b.symAmt.size;
     // focus% = top3 symbol turnover / total turnover
@@ -951,8 +959,16 @@ for(const r of rows){
     const top3 = sortedSym.slice(0,3).reduce((s,v)=>s+v,0);
     const total = b.buyAmt + b.sellAmt;
     const focus = total ? top3/total : 0;
+    
+    // top traded symbol for this broker (by turnover amount)
+let topSymbol = '—';
+let topSymbolAmt = -Infinity;
+for(const [sym, amt] of b.symAmt.entries()){
+  if(amt > topSymbolAmt){ topSymbolAmt = amt; topSymbol = sym; }
+}
+
     const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Flat');
-    return { broker:b.broker, ...b, netQty, netAmt, symbols, focus, tag };
+    return { broker:b.broker, ...b, netQty, netAmt, symbols, focus, topSymbol, topSymbolAmt, tag };
   });
 
   // Stock detail storage
@@ -1263,91 +1279,109 @@ function renderRecommendations(){
 }
 
 function renderBrokers(){
-  const q = (document.getElementById('brokerSearch').value||'').trim();
-  const rankBy = document.getElementById('brokerRankBy').value;
-
-  
-  const symQ = (document.getElementById('brokerSymbolSearch')?.value || '').trim().toUpperCase();
-  const symLabel = (symQ ? symQ : 'ALL');
-let rows = brokers;
-  // ✅ Optional: filter brokers by a single symbol (today-only drilldown)
-  if(symQ){
-    const bySym = [];
-    for(const [broker, m] of brokerSymAgg.entries()){
-      const o = m.get(symQ);
-      if(!o) continue;
-      bySym.push({
-        broker,
-        buyTrades: o.buyTrades||0,
-        buyQty: o.buyQty||0,
-        buyAmt: o.buyAmt||0,
-        sellTrades: o.sellTrades||0,
-        sellQty: o.sellQty||0,
-        sellAmt: o.sellAmt||0,
-        netQty: (o.netQty||0),
-        netAmt: (o.netAmt||0),
-        // focus not meaningful for single-symbol view; keep 100% for matched brokers
-        symbols: 1,
-        focus: 1
-      });
-    }
-    rows = bySym;
-  }
-  if(q) rows = rows.filter(b => String(b.broker).includes(q));
-
-  rows = [...rows].sort((a,b)=> brokerMetric(b,rankBy)-brokerMetric(a,rankBy));
-
-  // Charts
-  const top = rows.slice(0,12);
-  chartBar('chartBrokersNet', 'brokersNet',
-    top.map(d=>String(d.broker)),
-    top.map(d=>d.netQty),
-    'Net Qty'
-  );
-
-  // Buy vs Sell Amount (top brokers)
-  destroyChart('brokersBuySell');
-  charts['brokersBuySell'] = new Chart(document.getElementById('chartBrokersBuySell'), {
-    type:'bar',
-    data:{
-      labels: top.map(d=>String(d.broker)),
-      datasets:[
-        {label:'Buy Amount', data: top.map(d=>d.buyAmt)},
-        {label:'Sell Amount', data: top.map(d=>d.sellAmt)}
-      ]
-    },
-    options:{
-      responsive:true,
-      maintainAspectRatio:false,
-      devicePixelRatio: __DPR__,
-      plugins:{ legend:{display:true} },
-      scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
-    }
-  });
-
-  // Table
   const tbody = document.querySelector('#brokersTable tbody');
   tbody.innerHTML='';
-  for(const b of rows){
+  const symQ = (document.getElementById('brokerSymbolFilter')?.value||'').trim().toUpperCase();
+
+  // helper to create a row with the EXACT table format/columns
+  function addRow({
+    symbol, broker,
+    buyTrades, buyQty, buyAmt,
+    sellTrades, sellQty, sellAmt,
+    netQty, netAmt,
+    nSymbols, focus, tag
+  }){
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><b>${symLabel}</b></td>
-      <td><b>${b.broker}</b></td>
-      <td class="num">${fmt0.format(b.buyTrades)}</td>
-      <td class="num">${fmt0.format(b.buyQty)}</td>
-      <td class="num">${fmt1.format(b.buyAmt)}</td>
-      <td class="num">${fmt0.format(b.sellTrades)}</td>
-      <td class="num">${fmt0.format(b.sellQty)}</td>
-      <td class="num">${fmt1.format(b.sellAmt)}</td>
-      <td class="num">${fmt0.format(b.netQty)}</td>
-      <td class="num">${fmt1.format(b.netAmt)}</td>
-      <td class="num">${fmt0.format(b.symbols)}</td>
-      <td class="num">${fmt1.format(pct(b.focus))}%</td>
-      <td><span class="pill ${b.netQty>0?'good':(b.netQty<0?'bad':'')}">${b.tag}</span></td>
-    `;
-    tr.addEventListener('click', ()=>{ setSelectedBrokerForSymbolDetail(String(b.broker)); });
+      <td><b>${symbol}</b></td>
+      <td>${broker}</td>
+      <td>${buyTrades}</td>
+      <td>${fmt(buyQty)}</td>
+      <td>${cr(buyAmt)}</td>
+      <td>${sellTrades}</td>
+      <td>${fmt(sellQty)}</td>
+      <td>${cr(sellAmt)}</td>
+      <td>${fmt(netQty)}</td>
+      <td>${cr(netAmt)}</td>
+      <td>${nSymbols}</td>
+      <td>${(focus===null || focus===undefined) ? '—' : pct(focus)}</td>
+      <td>${tag}</td>`;
     tbody.appendChild(tr);
   }
+
+  brokers.forEach(b=>{
+    // If symbol filter applied → show ONLY that symbol (but still exact format)
+    if(symQ){
+      const buyTrades = b.symBuyTrades.get(symQ)||0;
+      const buyQty    = b.symBuyQty.get(symQ)||0;
+      const buyAmt    = b.symBuyAmt.get(symQ)||0;
+
+      const sellTrades = b.symSellTrades.get(symQ)||0;
+      const sellQty    = b.symSellQty.get(symQ)||0;
+      const sellAmt    = b.symSellAmt.get(symQ)||0;
+
+      const netQty = buyQty - sellQty;
+      const netAmt = buyAmt - sellAmt;
+
+      // focus for this symbol inside this broker (turnover share)
+      const brokerTotalTurnover = b.buyAmt + b.sellAmt;
+      const symTurnover = buyAmt + sellAmt;
+      const focus = brokerTotalTurnover ? (symTurnover / brokerTotalTurnover) : 0;
+
+      const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Neutral');
+
+      addRow({
+        symbol: symQ,
+        broker: b.broker,
+        buyTrades, buyQty, buyAmt,
+        sellTrades, sellQty, sellAmt,
+        netQty, netAmt,
+        nSymbols: 1,
+        focus,
+        tag
+      });
+      return;
+    }
+
+    // NO symbol filter → show EACH AND EVERY symbol for the broker
+    // Build the union of symbols seen in buy/sell maps (safer than symAmt alone)
+    const symSet = new Set();
+    b.symBuyAmt?.forEach((v,k)=>symSet.add(k));
+    b.symSellAmt?.forEach((v,k)=>symSet.add(k));
+    // fallback (in case) include symAmt keys too
+    b.symAmt?.forEach((v,k)=>symSet.add(k));
+
+    const brokerTotalTurnover = b.buyAmt + b.sellAmt;
+
+    Array.from(symSet).sort().forEach(sym=>{
+      const buyTrades = b.symBuyTrades.get(sym)||0;
+      const buyQty    = b.symBuyQty.get(sym)||0;
+      const buyAmt    = b.symBuyAmt.get(sym)||0;
+
+      const sellTrades = b.symSellTrades.get(sym)||0;
+      const sellQty    = b.symSellQty.get(sym)||0;
+      const sellAmt    = b.symSellAmt.get(sym)||0;
+
+      const netQty = buyQty - sellQty;
+      const netAmt = buyAmt - sellAmt;
+
+      const symTurnover = buyAmt + sellAmt;
+      const focus = brokerTotalTurnover ? (symTurnover / brokerTotalTurnover) : 0;
+
+      const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Neutral');
+
+      addRow({
+        symbol: sym,
+        broker: b.broker,
+        buyTrades, buyQty, buyAmt,
+        sellTrades, sellQty, sellAmt,
+        netQty, netAmt,
+        nSymbols: 1,
+        focus,
+        tag
+      });
+    });
+  });
 }
 
 
