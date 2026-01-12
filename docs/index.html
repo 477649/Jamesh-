@@ -192,16 +192,27 @@ th{ background:#f8fafc; }
 
 /* Auto-feed mode: hide manual upload UI */
 #dropZone, #fileInput { display: none !important; }
+
+/* -------- Period controls -------- */
+.period-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0 4px 0}
+.period-controls .label{font-weight:800;color:var(--text)}
+.period-controls select{padding:10px 12px;border:1px solid rgba(15,23,42,.18);border-radius:999px;background:#fff;font-weight:700}
+.period-controls .btnrow{display:flex;flex-wrap:wrap;gap:8px}
+.period-controls .pbtn{padding:10px 12px;border-radius:999px;border:1px solid rgba(15,23,42,.18);background:#fff;font-weight:800;cursor:pointer}
+.period-controls .pbtn.active{background:rgba(37,99,235,.12);border-color:rgba(37,99,235,.35)}
+
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="topbar">
       <div class="brand">
-        <h1>Bhupen | NEPSE 360° Advanced Market Dashboard</h1>
+        <h1>Bhupen|NEPSE Floorsheet – 360° Advanced Dashboard</h1>
         <p>
-          market summary, stock heat ranking, broker dominance accumulation/distribution, support-resistance zones (volume-by-price), big-trade detection, and watchlist signals.</p>
+          market summary, stock heat ranking, broker dominance, accumulation/distribution, support-resistance zones (volume-by-price), big-trade detection, and watchlist signals.
+        </p>
       </div>
+
     <div id="periodBadge" class="pill warn" style="font-weight:900;">
       Period: Auto
     </div>
@@ -220,6 +231,31 @@ th{ background:#f8fafc; }
         <button class="btn" id="btnExportBrokers" disabled>Export Brokers CSV</button>
       </div>
     </div>
+
+  <div class="period-controls" id="periodControls">
+    <span class="label">Select period:</span>
+    <select id="periodSelect">
+      <option value="auto">Auto</option>
+      <option value="1">1D</option>
+      <option value="7">7D</option>
+      <option value="15">15D</option>
+      <option value="30">1M</option>
+      <option value="90">3M</option>
+      <option value="180">6M</option>
+      <option value="365">1Y</option>
+      <option value="all">All Available</option>
+    </select>
+    <div class="btnrow" aria-label="Quick period buttons">
+      <button class="pbtn" data-v="1" type="button">1D</button>
+      <button class="pbtn" data-v="7" type="button">7D</button>
+      <button class="pbtn" data-v="15" type="button">15D</button>
+      <button class="pbtn" data-v="30" type="button">1M</button>
+      <button class="pbtn" data-v="90" type="button">3M</button>
+      <button class="pbtn" data-v="180" type="button">6M</button>
+      <button class="pbtn" data-v="365" type="button">1Y</button>
+    </div>
+  </div>
+
 
     <div class="tabs">
       <div class="tab active" data-tab="market">Market</div>
@@ -1474,7 +1510,8 @@ async function loadFromIndex(){
 
 // Hook controls
 document.getElementById('btnReloadIndex')?.addEventListener('click', loadFromIndex);
-document.getElementById('tfSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
+document.getElementById('tfSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); initPeriodControls();
+  loadFromIndex(); });
 document.getElementById('modeSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel());
   const mode = document.getElementById('modeSelect').value;
   const show = (mode==='range');
@@ -1563,6 +1600,50 @@ function currentPeriodLabel(){
   updatePeriodBadge(currentPeriodLabel());
   loadFromIndex();
 })();
+
+/* -------------------- Period controls wiring -------------------- */
+function setActivePeriodUI(val){
+  const sel = document.getElementById('periodSelect');
+  if(sel && sel.value !== val) sel.value = val;
+  document.querySelectorAll('#periodControls .pbtn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.v === val);
+  });
+}
+function periodLabelFromVal(v){
+  if(v==='1') return '1 Day';
+  if(v==='7') return '7 Days';
+  if(v==='15') return '15 Days';
+  if(v==='30') return '1 Month';
+  if(v==='90') return '3 Months';
+  if(v==='180') return '6 Months';
+  if(v==='365') return '1 Year';
+  if(v==='all') return 'All Available';
+  return 'Auto';
+}
+function applyPeriod(val){
+  const tf = document.getElementById('tfSelect');
+  if(tf){
+    tf.value = val;
+    if(typeof updatePeriodBadge === 'function'){ updatePeriodBadge(currentPeriodLabel()); }
+    tf.dispatchEvent(new Event('change'));
+  }else{
+    window.__NEPSE_PERIOD__ = val;
+    if(typeof updatePeriodBadge === 'function'){ updatePeriodBadge(periodLabelFromVal(val)); }
+    if(typeof loadFromIndex === 'function'){ loadFromIndex(); }
+  }
+  setActivePeriodUI(val);
+}
+function initPeriodControls(){
+  const sel = document.getElementById('periodSelect');
+  if(sel){ sel.addEventListener('change', ()=> applyPeriod(sel.value)); }
+  document.querySelectorAll('#periodControls .pbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=> applyPeriod(btn.dataset.v));
+  });
+  const tf = document.getElementById('tfSelect');
+  const initial = tf ? (tf.value || 'auto') : 'auto';
+  setActivePeriodUI(initial);
+}
+
 </script>
 </body>
 </html>
