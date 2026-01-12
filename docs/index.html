@@ -527,10 +527,9 @@ th{ background:#f8fafc; }
           <b>Focus%</b> = turnover from broker’s top-3 symbols / total broker turnover. High focus often indicates directional intent.
         </div>
       </div>
-    </div>
+    
 
-
-      <!-- Broker -> Symbol Detail (individual level) -->
+<!-- Broker -> Symbol Detail (individual level) -->
       <div class="card panel" style="margin-top:14px;">
         <div class="row">
           <h2>Broker → Symbol Detail (individual level)</h2>
@@ -583,7 +582,11 @@ th{ background:#f8fafc; }
       </div>
 
 
-    <!-- STOCK DETAIL -->
+    
+</div>
+
+
+      <!-- STOCK DETAIL -->
     <div id="tab-detail" class="grid hidden">
       <div class="card panel">
         <div class="row">
@@ -1327,6 +1330,8 @@ let rows = brokers;
     tr.addEventListener('click', ()=>{ setSelectedBrokerForSymbolDetail(String(b.broker)); });
     tbody.appendChild(tr);
   }
+  // ✅ Populate Broker → Symbol Detail table by default (ALL), then allow click filter
+  if(typeof renderBrokerSymbolDetail === 'function') renderBrokerSymbolDetail();
 }
 
 
@@ -1353,18 +1358,38 @@ function brokerSymRankVal(r, mode){
   return Math.abs(netAmt);
 }
 
+
+function buildAllBrokerSymbolAgg(){
+  const all = new Map();
+  for(const [, m] of brokerSymAgg.entries()){
+    for(const [sym, o] of m.entries()){
+      if(!all.has(sym)) all.set(sym, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
+      const a = all.get(sym);
+      a.buyTrades += o.buyTrades||0;
+      a.sellTrades += o.sellTrades||0;
+      a.buyQty += o.buyQty||0;
+      a.sellQty += o.sellQty||0;
+      a.buyAmt += o.buyAmt||0;
+      a.sellAmt += o.sellAmt||0;
+      a.netQty += o.netQty||0;
+      a.netAmt += o.netAmt||0;
+    }
+  }
+  return all;
+}
+
 function renderBrokerSymbolDetail(){
   const tbody = document.querySelector('#brokerSymbolDetailTable tbody');
   const q = (document.getElementById('brokerSymbolQuery')?.value || '').trim().toUpperCase();
   const rankBy = (document.getElementById('brokerSymbolRankBy')?.value || 'absNetAmt');
   const topN = Number(document.getElementById('brokerSymbolTopN')?.value || 20);
 
-  if(!selectedBrokerForSymbolDetail){
-    if(tbody) tbody.innerHTML = '<tr><td colspan="11" style="color:var(--muted); padding:12px;">Select a broker above to view symbol-wise details.</td></tr>';
-    return;
-  }
+  {
+  const badge = document.getElementById('brokerSymbolSelected');
+  const isAll = !selectedBrokerForSymbolDetail;
+  if(badge) badge.textContent = isAll ? 'Selected broker: ALL' : `Selected broker: ${selectedBrokerForSymbolDetail}`;
+  const m = isAll ? buildAllBrokerSymbolAgg() : brokerSymAgg.get(String(selectedBrokerForSymbolDetail));
 
-  const m = brokerSymAgg.get(String(selectedBrokerForSymbolDetail));
   if(!m || m.size===0){
     if(tbody) tbody.innerHTML = `<tr><td colspan="11" style="color:var(--muted); padding:12px;">Broker ${selectedBrokerForSymbolDetail}: no symbol data.</td></tr>`;
     return;
@@ -1408,6 +1433,7 @@ function renderBrokerSymbolDetail(){
       switchTab('detail');
     });
     tbody.appendChild(tr);
+  }
   }
 }
 
