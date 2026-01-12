@@ -480,7 +480,8 @@ th{ background:#f8fafc; }
           <h2>Brokers Table (net flow, focus)</h2>
           <div class="controls">
             <input id="brokerSearch" placeholder="Search broker code (e.g., 84)" />
-                        <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., ICFC)" />
+                        <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., HBL)" list="symbolsDatalist" />
+            <button class="btn" id="btnClearBrokerSymbol" type="button">Clear Symbol</button>
 <select id="brokerRankBy">
               <option value="netQty" selected>Rank: |Net Qty|</option>
               <option value="buyQty">Rank: Buy Qty</option>
@@ -770,6 +771,9 @@ function computeAll(){
   // Filter valid
   const rows = rawRows.filter(r => r.symbol && r.qty>0 && r.amt>=0);
 
+  // reset broker×symbol aggregation for this run
+  brokerSymAgg = new Map();
+
   // Market KPIs
   const totalTrades = rows.length;
   let totalQty=0, totalAmt=0;
@@ -907,8 +911,7 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
 
   // Brokers market aggregation + focus
   const byBroker = new Map();
-    brokerSymAgg = new Map();
-for(const r of rows){
+  for(const r of rows){
     if(r.buyer){
       if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
       const b = byBroker.get(r.buyer);
@@ -1105,10 +1108,7 @@ function renderStocks(){
       selectDetailSymbol(r.symbol);
       switchTab('detail');
     });
-    tr.addEventListener('click', ()=>{
-      openBrokerModal(String(b.broker), symQ || null);
-    });
-    tbody.appendChild(tr);
+tbody.appendChild(tr);
 }
 
   // Heat chart
@@ -1711,6 +1711,7 @@ document.getElementById('recTopN')?.addEventListener('change', renderRecommendat
 document.getElementById('brokerSearch').addEventListener('input', renderBrokers);
 
 document.getElementById('brokerSymbolSearch')?.addEventListener('input', renderBrokers);
+document.getElementById('btnClearBrokerSymbol')?.addEventListener('click', ()=>{ const el=document.getElementById('brokerSymbolSearch'); if(el){ el.value=''; } renderBrokers(); });
 document.getElementById('brokerRankBy').addEventListener('change', renderBrokers);
 
 document.getElementById('detailSymbolSearch')?.addEventListener('input', (e)=>{
@@ -1826,21 +1827,44 @@ function fmtDate(d){
 }
 
 function chooseFiles(indexObj){
-  const files = indexObj.files || [];
+  const files = (indexObj.files || []).slice().sort((a,b)=> String(a.date).localeCompare(String(b.date)));
   if(!files.length) return [];
 
-  // ✅ Today-only mode: always load ONLY the latest available day
-  const latest = files[files.length-1];
-  // Update badge
-  const badge = document.getElementById('periodBadge');
-  if(badge){
-    badge.textContent = `Period: 1D (${indexObj.latest || latest.date})`;
-    badge.className = 'pill good';
+  // Determine selected period
+  const tf = document.getElementById('tfSelect')?.value;
+  const ps = document.getElementById('periodSelect')?.value;
+  const period = (tf || window.__NEPSE_PERIOD__ || ps || 'auto'); // '1','7','15','30','90','180','365','all','auto'
+  const mode = document.getElementById('modeSelect')?.value || 'rolling';
+
+  // Custom date range mode (inclusive)
+  if(mode === 'range'){
+    const f = document.getElementById('dateFrom')?.value;
+    const t = document.getElementById('dateTo')?.value;
+    if(f && t){
+      const fromD = parseDate(f);
+      const toD = parseDate(t);
+      const chosen = files.filter(x=>{
+        const d = parseDate(x.date);
+        return d >= fromD && d <= toD;
+      });
+      return chosen;
+    }
+    // If range is selected but dates are missing, fall back to latest day
+    return [files[files.length-1]];
   }
-  // Keep the selector UI in sync (optional)
-  const ps = document.getElementById('periodSelect');
-  if(ps) ps.value = '1';
-  return [latest];
+
+  // Rolling mode
+  if(period === 'all'){
+    return files;
+  }
+
+  const n = Number(period);
+  if(Number.isFinite(n) && n > 0){
+    return files.slice(-n);
+  }
+
+  // Auto default: latest day
+  return [files[files.length-1]];
 }
 
 async function loadCsvUrl(url){
