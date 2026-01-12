@@ -3,25 +3,26 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUTS = ROOT / "outputs"
+OUTPUTS = ROOT / "outputs"      # where your daily XLSX files are
 DOCS = ROOT / "docs"
 DATA = DOCS / "data"
 
 DATA.mkdir(parents=True, exist_ok=True)
 
 # Read all daily XLSX floorsheets
-files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
-if not files:
-    raise SystemExit("No floorsheet XLSX files found.")
+xlsx_files = sorted(OUTPUTS.glob("floorsheet_*.xlsx"))
+if not xlsx_files:
+    raise SystemExit("No floorsheet_*.xlsx found in outputs/")
 
 manifest = {"files": [], "latest": None}
 
-for f in files:
+for f in xlsx_files:
+    # floorsheet_YYYY-MM-DD.xlsx -> YYYY-MM-DD
     date = f.stem.replace("floorsheet_", "")
     csv_name = f"floorsheet_{date}.csv"
     csv_path = DATA / csv_name
 
-    # Convert XLSX → CSV
+    # Convert XLSX → CSV (dashboard can read CSV)
     df = pd.read_excel(f)
     df.to_csv(csv_path, index=False)
 
@@ -32,10 +33,7 @@ for f in files:
 
 manifest["latest"] = manifest["files"][-1]["date"]
 
-# Write index.json for dashboard
-(DATA / "index.json").write_text(
-    json.dumps(manifest, indent=2),
-    encoding="utf-8"
-)
+# Save index.json (dashboard uses this for multi-day)
+(DATA / "index.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-print(f"Published {len(files)} days. Latest = {manifest['latest']}")
+print(f"Published {len(xlsx_files)} day(s). Latest: {manifest['latest']}")
