@@ -201,6 +201,22 @@ th{ background:#f8fafc; }
 .period-controls .pbtn{padding:10px 12px;border-radius:999px;border:1px solid rgba(15,23,42,.18);background:#fff;font-weight:800;cursor:pointer}
 .period-controls .pbtn.active{background:rgba(37,99,235,.12);border-color:rgba(37,99,235,.35)}
 
+
+/* ✅ Fix table header truncation (Broker → Symbol detail table) */
+.table-wrap{ overflow:auto; }
+table{ table-layout:auto; }
+th, td{ white-space:nowrap; }
+th{ overflow:visible !important; text-overflow:clip !important; }
+
+
+/* Broker symbol table specific (safe even if IDs absent) */
+#brokerSymbolTable, #brokerSymbolTbl, #brokerSymbolTable table, #brokerSymbolTbl table{
+  table-layout:auto !important;
+}
+#brokerSymbolTable th, #brokerSymbolTbl th{
+  max-width:none !important;
+}
+
 </style>
 </head>
 <body>
@@ -480,8 +496,7 @@ th{ background:#f8fafc; }
           <h2>Brokers Table (net flow, focus)</h2>
           <div class="controls">
             <input id="brokerSearch" placeholder="Search broker code (e.g., 84)" />
-                        <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., HBL)" list="symbolsDatalist" />
-            <button class="btn" id="btnClearBrokerSymbol" type="button">Clear Symbol</button>
+                        <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., ICFC)" />
 <select id="brokerRankBy">
               <option value="netQty" selected>Rank: |Net Qty|</option>
               <option value="buyQty">Rank: Buy Qty</option>
@@ -507,6 +522,7 @@ th{ background:#f8fafc; }
         <table id="brokersTable">
           <thead>
             <tr>
+            <th data-k="symbol">Symbol</th>
               <th data-k="broker">Broker</th>
               <th data-k="buyTrades">Buy Trades</th>
               <th data-k="buyQty">Buy Qty</th>
@@ -662,7 +678,7 @@ th{ background:#f8fafc; }
 <!-- Broker drilldown modal -->
 <div id="brokerModal" class="hidden" style="
   position:fixed; inset:0; background:rgba(0,0,0,.35);
-  display:flex; align-items:center; justify-content:center; padding:18px; z-index:9999;
+  display:none; align-items:center; justify-content:center; padding:18px; z-index:9999;
 ">
   <div style="
     width:min(1100px, 96vw); max-height:90vh; overflow:auto;
@@ -770,9 +786,6 @@ function normalizeRow(r){
 function computeAll(){
   // Filter valid
   const rows = rawRows.filter(r => r.symbol && r.qty>0 && r.amt>=0);
-
-  // reset broker×symbol aggregation for this run
-  brokerSymAgg = new Map();
 
   // Market KPIs
   const totalTrades = rows.length;
@@ -911,7 +924,8 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
 
   // Brokers market aggregation + focus
   const byBroker = new Map();
-  for(const r of rows){
+    brokerSymAgg = new Map();
+for(const r of rows){
     if(r.buyer){
       if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map()});
       const b = byBroker.get(r.buyer);
@@ -1252,6 +1266,7 @@ function renderBrokers(){
 
   
   const symQ = (document.getElementById('brokerSymbolSearch')?.value || '').trim().toUpperCase();
+  const symLabel = (symQ ? symQ : 'ALL');
 let rows = brokers;
   // ✅ Optional: filter brokers by a single symbol (today-only drilldown)
   if(symQ){
@@ -1314,6 +1329,7 @@ let rows = brokers;
   for(const b of rows){
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td><b>${symLabel}</b></td>
       <td><b>${b.broker}</b></td>
       <td class="num">${fmt0.format(b.buyTrades)}</td>
       <td class="num">${fmt0.format(b.buyQty)}</td>
@@ -1330,8 +1346,6 @@ let rows = brokers;
     tr.addEventListener('click', ()=>{ setSelectedBrokerForSymbolDetail(String(b.broker)); });
     tbody.appendChild(tr);
   }
-  // ✅ Populate Broker → Symbol Detail table by default (ALL), then allow click filter
-  if(typeof renderBrokerSymbolDetail === 'function') renderBrokerSymbolDetail();
 }
 
 
@@ -1358,38 +1372,18 @@ function brokerSymRankVal(r, mode){
   return Math.abs(netAmt);
 }
 
-
-function buildAllBrokerSymbolAgg(){
-  const all = new Map();
-  for(const [, m] of brokerSymAgg.entries()){
-    for(const [sym, o] of m.entries()){
-      if(!all.has(sym)) all.set(sym, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
-      const a = all.get(sym);
-      a.buyTrades += o.buyTrades||0;
-      a.sellTrades += o.sellTrades||0;
-      a.buyQty += o.buyQty||0;
-      a.sellQty += o.sellQty||0;
-      a.buyAmt += o.buyAmt||0;
-      a.sellAmt += o.sellAmt||0;
-      a.netQty += o.netQty||0;
-      a.netAmt += o.netAmt||0;
-    }
-  }
-  return all;
-}
-
 function renderBrokerSymbolDetail(){
   const tbody = document.querySelector('#brokerSymbolDetailTable tbody');
   const q = (document.getElementById('brokerSymbolQuery')?.value || '').trim().toUpperCase();
   const rankBy = (document.getElementById('brokerSymbolRankBy')?.value || 'absNetAmt');
   const topN = Number(document.getElementById('brokerSymbolTopN')?.value || 20);
 
-  {
-  const badge = document.getElementById('brokerSymbolSelected');
-  const isAll = !selectedBrokerForSymbolDetail;
-  if(badge) badge.textContent = isAll ? 'Selected broker: ALL' : `Selected broker: ${selectedBrokerForSymbolDetail}`;
-  const m = isAll ? buildAllBrokerSymbolAgg() : brokerSymAgg.get(String(selectedBrokerForSymbolDetail));
+  if(!selectedBrokerForSymbolDetail){
+    if(tbody) tbody.innerHTML = '<tr><td colspan="11" style="color:var(--muted); padding:12px;">Select a broker above to view symbol-wise details.</td></tr>';
+    return;
+  }
 
+  const m = brokerSymAgg.get(String(selectedBrokerForSymbolDetail));
   if(!m || m.size===0){
     if(tbody) tbody.innerHTML = `<tr><td colspan="11" style="color:var(--muted); padding:12px;">Broker ${selectedBrokerForSymbolDetail}: no symbol data.</td></tr>`;
     return;
@@ -1434,7 +1428,6 @@ function renderBrokerSymbolDetail(){
     });
     tbody.appendChild(tr);
   }
-  }
 }
 
 // Wire controls
@@ -1460,12 +1453,9 @@ function openBrokerModal(brokerCode, filterSymbol=null){
   const sellBody = document.querySelector('#brokerSellStocksTable tbody');
 
   const m = brokerSymAgg.get(String(brokerCode));
-  if(!m){
-    title.textContent = `Broker ${brokerCode}: no symbol data`;
-    buyBody.innerHTML = '';
-    sellBody.innerHTML = '';
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+  if(!m || m.size===0){
+    // ✅ Do NOT open the modal if there is no data (keeps other sections clickable)
+    // Optionally you can show a small hint in the inline broker→symbol table instead.
     return;
   }
 
@@ -1711,7 +1701,6 @@ document.getElementById('recTopN')?.addEventListener('change', renderRecommendat
 document.getElementById('brokerSearch').addEventListener('input', renderBrokers);
 
 document.getElementById('brokerSymbolSearch')?.addEventListener('input', renderBrokers);
-document.getElementById('btnClearBrokerSymbol')?.addEventListener('click', ()=>{ const el=document.getElementById('brokerSymbolSearch'); if(el){ el.value=''; } renderBrokers(); });
 document.getElementById('brokerRankBy').addEventListener('change', renderBrokers);
 
 document.getElementById('detailSymbolSearch')?.addEventListener('input', (e)=>{
@@ -1827,44 +1816,21 @@ function fmtDate(d){
 }
 
 function chooseFiles(indexObj){
-  const files = (indexObj.files || []).slice().sort((a,b)=> String(a.date).localeCompare(String(b.date)));
+  const files = indexObj.files || [];
   if(!files.length) return [];
 
-  // Determine selected period
-  const tf = document.getElementById('tfSelect')?.value;
-  const ps = document.getElementById('periodSelect')?.value;
-  const period = (tf || window.__NEPSE_PERIOD__ || ps || 'auto'); // '1','7','15','30','90','180','365','all','auto'
-  const mode = document.getElementById('modeSelect')?.value || 'rolling';
-
-  // Custom date range mode (inclusive)
-  if(mode === 'range'){
-    const f = document.getElementById('dateFrom')?.value;
-    const t = document.getElementById('dateTo')?.value;
-    if(f && t){
-      const fromD = parseDate(f);
-      const toD = parseDate(t);
-      const chosen = files.filter(x=>{
-        const d = parseDate(x.date);
-        return d >= fromD && d <= toD;
-      });
-      return chosen;
-    }
-    // If range is selected but dates are missing, fall back to latest day
-    return [files[files.length-1]];
+  // ✅ Today-only mode: always load ONLY the latest available day
+  const latest = files[files.length-1];
+  // Update badge
+  const badge = document.getElementById('periodBadge');
+  if(badge){
+    badge.textContent = `Period: 1D (${indexObj.latest || latest.date})`;
+    badge.className = 'pill good';
   }
-
-  // Rolling mode
-  if(period === 'all'){
-    return files;
-  }
-
-  const n = Number(period);
-  if(Number.isFinite(n) && n > 0){
-    return files.slice(-n);
-  }
-
-  // Auto default: latest day
-  return [files[files.length-1]];
+  // Keep the selector UI in sync (optional)
+  const ps = document.getElementById('periodSelect');
+  if(ps) ps.value = '1';
+  return [latest];
 }
 
 async function loadCsvUrl(url){
