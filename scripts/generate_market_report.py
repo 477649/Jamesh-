@@ -13,11 +13,13 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 # =========================
 # CONFIG
 # =========================
-INPUT_FOLDER = "outputs"
+# ✅ GitHub folder: outputs/Floor Sheet/floorsheet_YYYY-MM-DD.csv
+INPUT_FOLDER = os.path.join("outputs", "Floor Sheet")
+
 REPORT_FOLDER = os.path.join("outputs", "reports")
 REPORT_NAME_PREFIX = "Market_Overview_Report"
 
-# windows in "number of available trading days (files)"
+# ✅ WINDOWS = number of AVAILABLE trading days (dates) from latest going backwards
 WINDOWS = {"1D": 1, "7D": 7, "15D": 15, "1M": 30}
 
 CRORE = 10_000_000
@@ -48,15 +50,17 @@ def _safe_float(x):
             return np.nan
         s = str(x).strip().replace(",", "")
         return float(s) if s else np.nan
-    except:
+    except Exception:
         return np.nan
 
 
 def _parse_date_from_filename(fname: str):
     """
     Accepts:
+      floorsheet_2026-01-10.csv
       floorsheet_2026-01-10.xlsx
       floorsheet_20260110.xlsx
+      floorsheet_20260110.csv
     """
     base = os.path.basename(fname)
 
@@ -128,9 +132,9 @@ def load_all_floorsheets(folder: str) -> pd.DataFrame:
     files = []
     for fn in sorted(os.listdir(folder)):
         low = fn.lower()
-        if not (low.endswith(".xlsx") or low.endswith(".xls") or low.endswith(".csv")):
-            continue
         if "floorsheet" not in low:
+            continue
+        if not (low.endswith(".csv") or low.endswith(".xlsx") or low.endswith(".xls")):
             continue
         files.append(os.path.join(folder, fn))
 
@@ -157,7 +161,7 @@ def load_all_floorsheets(folder: str) -> pd.DataFrame:
         all_rows.append(df2)
 
     if not all_rows:
-        raise ValueError("All files were skipped. Ensure filenames include date like floorsheet_YYYY-MM-DD.xlsx")
+        raise ValueError("All files were skipped. Ensure filenames include date like floorsheet_YYYY-MM-DD.csv")
 
     big = pd.concat(all_rows, ignore_index=True)
     big = big.dropna(subset=["Symbol"])
@@ -185,17 +189,28 @@ def build_daily_symbol_prices(trades: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
-def _rolling_dates(all_dates, end_date, window_days):
-    dates = [d for d in all_dates if d <= end_date]
-    return dates[-window_days:] if dates else []
+# ✅ ALWAYS pick last N AVAILABLE trading dates (from latest backwards)
+def _rolling_dates(all_dates, window_days):
+    """
+    all_dates: sorted list of unique dates (python date)
+    returns: last N dates from the latest available date
+    """
+    if not all_dates:
+        return []
+    n = int(window_days) if window_days else 0
+    if n <= 0:
+        return []
+    return all_dates[-n:] if len(all_dates) >= n else all_dates
 
 
 def compute_price_gain(daily_prices: pd.DataFrame, window_days: int) -> pd.DataFrame:
     dp = daily_prices.copy()
     dp["Date"] = pd.to_datetime(dp["Date"])
     all_dates = sorted(dp["Date"].dt.date.unique())
-    latest_date = max(all_dates)
-    win_dates = _rolling_dates(all_dates, latest_date, window_days)
+    if not all_dates:
+        return pd.DataFrame(columns=["Symbol", "Today Price", f"Price_Gain_%_{window_days}D"])
+
+    win_dates = _rolling_dates(all_dates, window_days)
 
     sub = dp[dp["Date"].dt.date.isin(win_dates)].copy()
     if sub.empty:
@@ -223,8 +238,11 @@ def compute_broker_net(trades: pd.DataFrame, window_days: int) -> pd.DataFrame:
     t = trades.copy()
     t["Date"] = pd.to_datetime(t["Date"]).dt.date
     all_dates = sorted(t["Date"].unique())
-    latest = max(all_dates)
-    win_dates = _rolling_dates(all_dates, latest, window_days)
+    if not all_dates:
+        return pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Buy_Amt", "Sell_Qty", "Sell_Amt", "Net_Qty", "Net_Amount"])
+
+    latest = all_dates[-1]
+    win_dates = _rolling_dates(all_dates, window_days)
     sub = t[t["Date"].isin(win_dates)].copy()
 
     buy = (
@@ -287,14 +305,14 @@ def price_vs_vwap_label(last_price: float, vwap: float) -> str:
 
 
 def build_market_overview_detailed(trades: pd.DataFrame, daily_prices: pd.DataFrame, window_days: int) -> pd.DataFrame:
-    """
-    EXACT requested columns for Market Overview window.
-    """
     t = trades.copy()
     t["Date"] = pd.to_datetime(t["Date"]).dt.date
     all_dates = sorted(t["Date"].unique())
-    latest = max(all_dates)
-    win_dates = _rolling_dates(all_dates, latest, window_days)
+    if not all_dates:
+        return pd.DataFrame()
+
+    latest = all_dates[-1]
+    win_dates = _rolling_dates(all_dates, window_days)
     sub = t[t["Date"].isin(win_dates)].copy()
 
     if sub.empty:
@@ -363,7 +381,6 @@ def build_market_overview_detailed(trades: pd.DataFrame, daily_prices: pd.DataFr
         .fillna(0)
     )
 
-    # In floorsheet, trade row has both buyer & seller; your sample shows same counts
     out["Buy_Trades"] = out["Total_Trades"]
     out["Sell_Trades"] = out["Total_Trades"]
 
@@ -435,18 +452,18 @@ def build_price_movement(daily_prices: pd.DataFrame) -> pd.DataFrame:
     def fmt(today_price, pct):
         try:
             tp = float(today_price)
-        except:
+        except Exception:
             return ""
         try:
             p = float(pct)
-        except:
+        except Exception:
             p = 0.0
         return f"{tp:.0f}({p:.0f}%)"
 
     out = pd.DataFrame()
     out["Rank"] = np.arange(1, len(df) + 1)
     out["Symbol"] = df["Symbol"]
-    out["Today Price"] = df["Today Price"].round(2)
+    out["Today Price"] = pd.to_numeric(df["Today Price"], errors="coerce").round(2)
     out["Price_Gain_%_7D"] = df.apply(lambda r: fmt(r["Today Price"], r["Gain_7D"]), axis=1)
     out["Price_Gain_%_15D"] = df.apply(lambda r: fmt(r["Today Price"], r["Gain_15D"]), axis=1)
     out["Price_Gain_%_1M"] = df.apply(lambda r: fmt(r["Today Price"], r["Gain_1M"]), axis=1)
@@ -557,10 +574,6 @@ def write_df_sheet(wb: Workbook, sheet_name: str, df: pd.DataFrame, table_name: 
 
 
 def write_market_overview_all_in_one_sheet(wb: Workbook, latest_date, df_1d, df_7d, df_15d, df_1m):
-    """
-    ONE SHEET with 4 blocks side-by-side:
-      Market_Overview_1D | Market_Overview_7D | Market_Overview_15D | Market_Overview_1M
-    """
     ws = wb.create_sheet("Market_Overview_All")
 
     ws["A1"] = f"Market Overview — 1D / 7D / 15D / 1M (Trade Date: {latest_date})"
@@ -606,15 +619,17 @@ def write_market_overview_all_in_one_sheet(wb: Workbook, latest_date, df_1d, df_
 # MAIN
 # =========================
 def main():
-    print("[1/5] Loading floorsheets from outputs/ ...")
+    print(f"[1/5] Loading floorsheets from {INPUT_FOLDER} ...")
     trades = load_all_floorsheets(INPUT_FOLDER)
 
     print("[2/5] Building daily prices ...")
     daily_prices = build_daily_symbol_prices(trades)
-    latest_date = max(pd.to_datetime(daily_prices["Date"]).dt.date.unique())
+
+    all_dates = sorted(pd.to_datetime(daily_prices["Date"]).dt.date.unique())
+    latest_date = all_dates[-1] if all_dates else None
     print(f"[INFO] Latest trade date: {latest_date}")
 
-    print("[3/5] Building Market Overview windows ...")
+    print("[3/5] Building Market Overview windows (latest -> back by available dates) ...")
     df_1d = build_market_overview_detailed(trades, daily_prices, WINDOWS["1D"]).head(200)
     df_7d = build_market_overview_detailed(trades, daily_prices, WINDOWS["7D"]).head(200)
     df_15d = build_market_overview_detailed(trades, daily_prices, WINDOWS["15D"]).head(200)
@@ -631,10 +646,7 @@ def main():
     wb = Workbook()
     wb.remove(wb.active)
 
-    # ✅ One-sheet market overview (previous logic style)
     write_market_overview_all_in_one_sheet(wb, latest_date, df_1d, df_7d, df_15d, df_1m)
-
-    # ✅ Other sheets
     write_df_sheet(wb, "Price Movement", df_pm, "TBL_PRICE_MOVE")
     write_df_sheet(wb, "Broker Holding", df_bh, "TBL_BROKER_HOLD")
 
