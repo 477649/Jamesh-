@@ -35,26 +35,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 1️⃣ Floorsheet first
       - name: Run floorsheet scraper
         run: |
           python scrape_chukul_floorsheet.py
 
+      # 2️⃣ ShareSansar today share price
+      - name: Run ShareSansar today share price scraper
+        run: |
+          python scripts/sharesansar_today_share_price.py
+
+      # 3️⃣ Market overview report
       - name: Generate Market Overview Report
         run: |
           python scripts/generate_market_report.py
 
+      # 4️⃣ Commit and push all daily outputs
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add BOTH floorsheet + report outputs
-          git add outputs/*.xlsx outputs/reports/*.xlsx || true
+          # Add floorsheet + sharesansar + reports
+          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv || true
 
           # Commit if there are changes
           git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
 
-          # ✅ Fix push rejection: sync with remote then push
+          # Sync & push
           git pull --rebase origin main
           git push origin main
 
@@ -75,12 +83,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add dashboard data only
           git add docs/data/index.json docs/data/*.csv || true
-
-          # Commit if there are changes
           git commit -m "Update dashboard data for GitHub Pages" || echo "No dashboard changes"
 
-          # Sync & push
           git pull --rebase origin main
           git push origin main
