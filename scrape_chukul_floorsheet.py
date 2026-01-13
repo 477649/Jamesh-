@@ -83,8 +83,10 @@ def main():
     npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
-    os.makedirs("outputs", exist_ok=True)
-    out_xlsx = f"outputs/floorsheet_{run_date}.xlsx"
+    # ✅ Create outputs/Floor Sheet and save CSV inside it
+    out_dir = os.path.join("outputs", "Floor Sheet")
+    os.makedirs(out_dir, exist_ok=True)
+    out_csv = os.path.join(out_dir, f"floorsheet_{run_date}.csv")
 
     # Auto detect GitHub Actions (must run headless there)
     IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
@@ -135,8 +137,9 @@ def main():
         total_amount = df["Amount"].dropna().sum()
         print(f"Pages scraped: {current_page} | Rows: {len(df)} | Total Amount: {total_amount:,.2f}")
 
-        df.to_excel(out_xlsx, index=False)
-        print(f"Saved: {out_xlsx}")
+        # ✅ Save as CSV (same data, just CSV)
+        df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+        print(f"Saved: {out_csv}")
 
     finally:
         driver.quit()
