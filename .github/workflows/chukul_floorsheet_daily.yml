@@ -35,6 +35,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ✅ NEW (recommended): Ensure Chrome exists on runner for Selenium
+      - name: Install Google Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
       # 1️⃣ Floorsheet first
       - name: Run floorsheet scraper
         run: |
@@ -62,7 +68,7 @@ jobs:
           # Commit if there are changes
           git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
 
-          # Sync & push
+          # ✅ Fix push rejection: sync with remote then push
           git pull --rebase origin main
           git push origin main
 
@@ -83,8 +89,12 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
+          # Add dashboard data only
           git add docs/data/index.json docs/data/*.csv || true
+
+          # Commit if there are changes
           git commit -m "Update dashboard data for GitHub Pages" || echo "No dashboard changes"
 
+          # Sync & push
           git pull --rebase origin main
           git push origin main
