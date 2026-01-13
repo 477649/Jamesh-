@@ -42,7 +42,6 @@ def scrape_current_page(driver):
 
 
 def first_row_key(driver):
-    """Used to confirm page actually changed after clicking next."""
     try:
         return driver.find_element(By.CSS_SELECTOR, "table tbody tr td").text.strip()
     except Exception:
@@ -50,26 +49,19 @@ def first_row_key(driver):
 
 
 def go_to_next_page(driver, wait, current_page):
-    """
-    Click next page by VISIBLE TEXT (e.g., '139'), not aria-label.
-    This fixes the issue where it stops at 138 even though 139 exists.
-    """
     target = str(current_page + 1)
 
-    # Find the next page button anywhere inside q-pagination by its visible number
     buttons = driver.find_elements(
         By.XPATH,
         f"//div[contains(@class,'q-pagination')]//button[normalize-space()='{target}']"
     )
 
     if not buttons:
-        return False  # no next page visible => last page reached
+        return False
 
     before = first_row_key(driver)
-
     driver.execute_script("arguments[0].click();", buttons[0])
 
-    # Wait until table content changes (prevents scraping same page again)
     if before is not None:
         wait.until(lambda d: first_row_key(d) != before)
     else:
@@ -79,16 +71,19 @@ def go_to_next_page(driver, wait, current_page):
 
 
 def main():
-    # Nepal time for filename
+    # ✅ Repo root (IMPORTANT)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    # Nepal time
     npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
-    # ✅ Create outputs/Floor Sheet and save CSV inside it
-    out_dir = os.path.join("outputs", "Floor Sheet")
+    # ✅ EXACT location: outputs/Floor Sheet
+    out_dir = os.path.join(BASE_DIR, "outputs", "Floor Sheet")
     os.makedirs(out_dir, exist_ok=True)
+
     out_csv = os.path.join(out_dir, f"floorsheet_{run_date}.csv")
 
-    # Auto detect GitHub Actions (must run headless there)
     IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
 
     chrome_options = webdriver.ChromeOptions()
@@ -99,11 +94,10 @@ def main():
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
     else:
-        # Desktop: visible browser
         chrome_options.add_argument("--start-maximized")
 
-    driver = webdriver.Chrome(options=chrome_options)  # Selenium Manager auto driver
-    wait = WebDriverWait(driver,30)
+    driver = webdriver.Chrome(options=chrome_options)
+    wait = WebDriverWait(driver, 30)
 
     try:
         driver.get(URL)
@@ -113,12 +107,10 @@ def main():
         current_page = 1
 
         while True:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table")))
             all_data.extend(scrape_current_page(driver))
             print(f"Scraped page: {current_page}")
 
             if not go_to_next_page(driver, wait, current_page):
-                print("Reached last page.")
                 break
 
             current_page += 1
@@ -127,19 +119,15 @@ def main():
         header = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
 
         if df.shape[1] != len(header):
-            raise ValueError(f"Column mismatch: got {df.shape[1]} cols, expected {len(header)}")
+            raise ValueError("Column mismatch")
 
         df.columns = header
         df["Quantity"] = df["Quantity"].apply(parse_numeric)
         df["Rate"] = df["Rate"].apply(parse_numeric)
         df["Amount"] = df["Amount"].apply(parse_numeric)
 
-        total_amount = df["Amount"].dropna().sum()
-        print(f"Pages scraped: {current_page} | Rows: {len(df)} | Total Amount: {total_amount:,.2f}")
-
-        # ✅ Save as CSV (same data, just CSV)
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")
-        print(f"Saved: {out_csv}")
+        print(f"Saved successfully: {out_csv}")
 
     finally:
         driver.quit()
