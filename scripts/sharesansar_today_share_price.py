@@ -41,15 +41,15 @@ def get_page_table(driver, table_class):
         EC.presence_of_element_located((By.XPATH, "//div[@class='floatThead-wrapper']"))
     )
     soup = BeautifulSoup(driver.page_source, 'lxml')
-    table = soup.find("table", {"class":table_class})
-    tab_data = [[cell.text.replace('\r', '').replace('\n', '') for cell in row.find_all(["th","td"])]
-                        for row in table.find_all("tr")]
+    table = soup.find("table", {"class": table_class})
+    tab_data = [[cell.text.replace('\r', '').replace('\n', '') for cell in row.find_all(["th", "td"])]
+                for row in table.find_all("tr")]
     df = pd.DataFrame(tab_data)
     return df
 
 
 def scrape_data(driver, date):
-    search(driver, date = date)
+    search(driver, date=date)
     df = pd.DataFrame()
     count = 0
     while True:
@@ -70,10 +70,10 @@ def scrape_data(driver, date):
 
 
 def clean_df(df):
-    new_df = df.drop_duplicates(keep='first') # drop all duplicates
-    new_header = new_df.iloc[0] # grabing the first row for the header
-    new_df = new_df[1:] # taking the data lower than the header row
-    new_df.columns = new_header # setting the header row as the df header
+    new_df = df.drop_duplicates(keep='first')  # drop all duplicates
+    new_header = new_df.iloc[0]  # grabing the first row for the header
+    new_df = new_df[1:]  # taking the data lower than the header row
+    new_df.columns = new_header  # setting the header row as the df header
     new_df.drop(["S.No"], axis=1, inplace=True)
     return new_df
 
@@ -91,16 +91,22 @@ def main():
 
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(120)
+
+    # ✅ Keep search date format as required by the site input
     date = datetime.today().strftime('%m/%d/%Y')
     # date = "2021-08-31"
+
     search(driver, date)
     df = scrape_data(driver, date)
-    final_df = clean_df(df) 
-    file_name = date.replace("/", "_")
+    final_df = clean_df(df)
+
+    # ✅ Output filename format: SharePrice_YYYY-MM-DD
+    run_date = datetime.today().strftime('%Y-%m-%d')
+    file_name = f"SharePrice_{run_date}"
 
     # ✅ Save into separate folder under outputs/
     os.makedirs("outputs/sharesansar", exist_ok=True)
-    final_df.to_csv(f"outputs/sharesansar/{file_name}.csv", index=False) # Save to CSV file
+    final_df.to_csv(f"outputs/sharesansar/{file_name}.csv", index=False)  # Save to CSV file
 
 
 if __name__ == "__main__":
