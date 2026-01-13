@@ -62,8 +62,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add floorsheet + sharesansar + reports
-          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv || true
+          # Add floorsheet + sharesansar + reports + Floor Sheet CSV folder
+          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv "outputs/Floor Sheet/*.csv" || true
 
           # Commit if there are changes
           git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
