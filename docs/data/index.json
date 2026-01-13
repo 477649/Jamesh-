@@ -7,7 +7,11 @@
     {
       "date": "2026-01-12",
       "file": "data/floorsheet_2026-01-12.csv"
+    },
+    {
+      "date": "2026-01-13",
+      "file": "data/floorsheet_2026-01-13.csv"
     }
   ],
-  "latest": "2026-01-12"
+  "latest": "2026-01-13"
 }
