@@ -9,7 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import sys
 import time
-import os  # ✅ added (only for folder creation)
+import os
 
 import chromedriver_autoinstaller as chromedriver
 chromedriver.install()
@@ -77,18 +77,25 @@ def clean_df(df):
 
 def main():
     options = Options()
-    options.headless = True
-    options.add_argument="user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.115 Safari/537.36"
+
+    # ✅ Required for GitHub Actions Ubuntu headless Chrome stability
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    # ✅ Fix: correct way to add user-agent (your old line overwrote the method)
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.115 Safari/537.36")
+
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(120)
     date = datetime.today().strftime('%m/%d/%Y')
     # date = "2021-08-31"
     search(driver, date)
     df = scrape_data(driver, date)
-    final_df = clean_df(df)
+    final_df = clean_df(df) 
     file_name = date.replace("/", "_")
 
-    # ✅ only change: save into separate folder under outputs/
+    # ✅ Save to separate folder under outputs/
     os.makedirs("outputs/sharesansar", exist_ok=True)
     final_df.to_csv(f"outputs/sharesansar/{file_name}.csv", index=False) # Save to CSV file
 
