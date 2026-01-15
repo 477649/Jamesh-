@@ -1,4 +1,4 @@
-update this into workflowname: Chukul Floorsheet Daily (3:30 PM NPT)
+name: Chukul Floorsheet Daily (3:30 PM NPT)
 
 on:
   schedule:
