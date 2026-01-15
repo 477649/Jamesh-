@@ -23,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # ✅ important for pull/rebase to work properly
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -35,40 +35,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ NEW (recommended): Ensure Chrome exists on runner for Selenium
+      # ✅ Ensure Chrome exists (for floorsheet Selenium only)
       - name: Install Google Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-      # 1️⃣ Floorsheet first
+      # 1️⃣ Floorsheet scraper (UNCHANGED)
       - name: Run floorsheet scraper
         run: |
           python scrape_chukul_floorsheet.py
 
-      # 2️⃣ ShareSansar today share price
-      - name: Run ShareSansar today share price scraper
+      # 2️⃣ NEPSE official today share price (API)
+      - name: Run NEPSE today share price fetcher
         run: |
-          python scripts/sharesansar_today_share_price.py
+          python scripts/fetch_today_price.py
 
       # 3️⃣ Market overview report
       - name: Generate Market Overview Report
         run: |
           python scripts/generate_market_report.py
 
-      # 4️⃣ Commit and push all daily outputs
+      # 4️⃣ Commit and push daily outputs
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add floorsheet + sharesansar + reports + Floor Sheet CSV folder
-          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv "outputs/Floor Sheet/*.csv" || true
+          # Floorsheet + NEPSE today price + reports
+          git add \
+            outputs/share_price/*.csv \
+            outputs/*.xlsx \
+            outputs/reports/*.xlsx \
+            "outputs/Floor Sheet/*.csv" || true
 
-          # Commit if there are changes
-          git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
+          git commit -m "Daily floorsheet + NEPSE today price (3:30 PM NPT)" || echo "No changes to commit"
 
-          # ✅ Fix push rejection: sync with remote then push
           git pull --rebase origin main
           git push origin main
 
@@ -89,12 +91,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add dashboard data only
           git add docs/data/index.json docs/data/*.csv || true
-
-          # Commit if there are changes
           git commit -m "Update dashboard data for GitHub Pages" || echo "No dashboard changes"
 
-          # Sync & push
           git pull --rebase origin main
           git push origin main
