@@ -4,7 +4,8 @@ on:
   schedule:
     # 03:30 PM Nepal Time (UTC +5:45)
     # 15:30 NPT = 09:45 UTC
-    - cron: "45 9 * * *"
+    # ✅ Run Sunday–Thursday ONLY (skip Friday & Saturday)
+    - cron: "45 9 * * 0-4"
   workflow_dispatch:
 
 permissions:
