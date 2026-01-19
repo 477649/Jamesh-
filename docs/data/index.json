@@ -15,7 +15,11 @@
     {
       "date": "2026-01-18",
       "file": "data/floorsheet_2026-01-18.csv"
+    },
+    {
+      "date": "2026-01-19",
+      "file": "data/floorsheet_2026-01-19.csv"
     }
   ],
-  "latest": "2026-01-18"
+  "latest": "2026-01-19"
 }
