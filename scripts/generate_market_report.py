@@ -964,7 +964,7 @@ def main():
             broker_summary_all.append(bsum)
 
             # Broker-by-symbol top lists
-            tb = top_net_brokers(bs_window, topn=5)
+            tb = top_net_brokers(bs_window, topn=99999)
             tb = tb.merge(brokers_master, on="Broker", how="left")
             tb["BrokerName"] = tb["BrokerName"].fillna("")
             tb["BrokerType"] = tb["BrokerType"].fillna("UNKNOWN")
