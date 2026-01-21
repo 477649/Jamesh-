@@ -515,7 +515,33 @@ def classify_signal(score: pd.Series):
 
 
 def build_trade_score(sym: pd.DataFrame):
+
     x = sym.copy()
+
+    # -------------------------------------------------
+    # ROBUST COLUMN NORMALIZATION (prevents KeyError)
+    # Some upstream merges can create VWAP_x / VWAP_y or drop VWAP entirely
+    # depending on which source file had the column. We coalesce safely here.
+    # -------------------------------------------------
+    if "VWAP" not in x.columns:
+        vwap_candidates = [c for c in ["VWAP_y", "VWAP_x", "vwap", "Vwap"] if c in x.columns]
+        if vwap_candidates:
+            x["VWAP"] = pd.to_numeric(x[vwap_candidates[0]], errors="coerce")
+            for c in vwap_candidates[1:]:
+                x["VWAP"] = x["VWAP"].combine_first(pd.to_numeric(x[c], errors="coerce"))
+        else:
+            x["VWAP"] = np.nan
+
+    if "Last_Price" not in x.columns:
+        lp_candidates = [c for c in ["LTP", "Ltp", "Close", "Close_latest"] if c in x.columns]
+        if lp_candidates:
+            x["Last_Price"] = pd.to_numeric(x[lp_candidates[0]], errors="coerce")
+        else:
+            x["Last_Price"] = np.nan
+
+    for c in ["Total_Qty", "Total_Amount_Cr", "Buy_Pressure", "Sell_Pressure", "Momentum"]:
+        if c not in x.columns:
+            x[c] = np.nan
 
     # Core ratios
     x["Price_vs_VWAP"] = np.where(
