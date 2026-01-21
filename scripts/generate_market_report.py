@@ -332,9 +332,19 @@ def technicals_from_prices(pr: pd.DataFrame, latest_date: pd.Timestamp, lookback
         )
 
     tech = pd.DataFrame(out_rows)
+
+    # If nothing computed, return an empty frame with expected columns
+    if tech.empty:
+        return pd.DataFrame(columns=[
+            "Symbol", "MA_Fast", "MA_Slow", "Trend_Score", "RSI", "ATR_pct",
+            "Volatility", "Max_Drawdown", "Breakout", "Breakdown", "Above_MA_Slow",
+        ])
+
+    # Keep only symbols that exist on the latest day (reduces noise)
     latest_syms = pr.loc[pr["TradeDate"] == latest_date, "Symbol"].dropna().unique().tolist()
-    if latest_syms:
+    if latest_syms and "Symbol" in tech.columns:
         tech = tech[tech["Symbol"].isin(latest_syms)].copy()
+
     return tech
 
 
