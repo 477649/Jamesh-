@@ -16,6 +16,15 @@
 # - Trap warnings (operator-driven, churn, weak follow-through)
 # - New "Trade_Setups" sheet (best actionable setups per window)
 # - Fixed Recommendation conditional formatting formulas
+#
+# NEW WORLD-CLASS INSIGHTS ADDED (Trader / Investor grade):
+# - Trend regime: MA Fast/Slow, Trend_Score
+# - RSI (momentum exhaustion), ATR% (risk), Volatility (daily return std), Max Drawdown
+# - Breakout/Breakdown detection (window-aware)
+# - Market Relative Strength (RS_Market) and Sector Relative Strength (RS_Sector)
+# - Market Breadth sheet (what % of stocks are in uptrend, breakouts, buy signals)
+# - Risk Grid sheet (risk level + position sizing hint)
+# - Setup tags upgraded: Breakout, Pullback, Mean-Reversion + confirmations
 # ------------------------------------------------------------
 
 import re
@@ -72,6 +81,22 @@ MIN_LIQ_CR_FOR_BUY = 1.0      # buy should be at least 1 Cr in window to avoid t
 SELL_WALL_TH = 0.60           # if sell pressure >= 0.60 -> usually distribution / supply
 BUY_DOM_TH = 0.45             # buyer dominance
 VOL_SURGE_TH = 1.50           # volume surge threshold for confirmation
+
+# ✅ Advanced risk & technical thresholds (tunable)
+MA_FAST = 5
+MA_SLOW = 20
+RSI_PERIOD = 14
+ATR_PERIOD = 14
+BREAKOUT_LOOKBACK = 20           # breakout/breakdown lookback (trading days)
+MAX_VOLATILITY_FOR_BUY = 0.070   # ~7% daily return std is very high
+MAX_DRAWDOWN_FOR_BUY = 0.22      # 22% max drawdown risk cap
+RSI_OVERBOUGHT = 72
+RSI_OVERSOLD = 30
+
+# Risk sizing knobs (rule-of-thumb)
+ACCOUNT_RISK_PCT = 1.0           # risk per position (1% of capital)
+MAX_POSITION_PCT = 25.0          # never exceed 25% (safety)
+MIN_POSITION_PCT = 2.0           # minimum tradable allocation
 
 FLOOR_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 PRICE_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
@@ -130,6 +155,8 @@ def load_sector_master(path: Path):
         if c not in df.columns:
             df[c] = ""
     df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
+    df["Company"] = df["Company"].astype(str).fillna("")
+    df["Sectors"] = df["Sectors"].astype(str).fillna("")
     return df[["Symbol", "Company", "Sectors"]].drop_duplicates()
 
 
@@ -209,6 +236,128 @@ def zscore(s: pd.Series):
     if std == 0 or np.isnan(std):
         return pd.Series(np.zeros(len(s)), index=s.index)
     return (s - s.mean()) / (std + 1e-9)
+
+
+# =========================
+# TECHNICALS (NEW)
+# =========================
+def _rsi(close: pd.Series, period=14):
+    close = close.astype(float)
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def _atr_pct(df_sym: pd.DataFrame, period=14):
+    d = df_sym.sort_values("TradeDate").copy()
+    h = d["High"].astype(float)
+    l = d["Low"].astype(float)
+    c = d["Close"].astype(float)
+    prev_c = c.shift(1)
+    tr = pd.concat([(h - l), (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    last_close = c.iloc[-1] if len(c) else np.nan
+    if pd.isna(last_close) or last_close == 0:
+        return np.nan
+    return float(atr.iloc[-1] / last_close) if len(atr) else np.nan
+
+
+def _max_drawdown(close: pd.Series):
+    close = close.astype(float)
+    peak = close.cummax()
+    dd = (close / peak) - 1.0
+    return float(dd.min()) if len(dd) else np.nan
+
+
+def technicals_from_prices(pr: pd.DataFrame, latest_date: pd.Timestamp, lookback: int):
+    if pr.empty:
+        return pd.DataFrame(
+            columns=[
+                "Symbol",
+                "MA_Fast", "MA_Slow", "Trend_Score",
+                "RSI", "ATR_pct", "Volatility", "Max_Drawdown",
+                "Breakout", "Breakdown", "Above_MA_Slow",
+            ]
+        )
+
+    out_rows = []
+    p = pr.sort_values(["Symbol", "TradeDate"]).copy()
+    for sym, d in p.groupby("Symbol"):
+        d = d.sort_values("TradeDate")
+        if d["TradeDate"].nunique() < 3:
+            continue
+
+        close = d["Close"].astype(float)
+        ret = close.pct_change()
+
+        ma_fast = close.rolling(MA_FAST).mean().iloc[-1] if len(close) >= MA_FAST else np.nan
+        ma_slow = close.rolling(MA_SLOW).mean().iloc[-1] if len(close) >= MA_SLOW else np.nan
+
+        trend_score = np.nan
+        if (not pd.isna(ma_fast)) and (not pd.isna(ma_slow)) and ma_slow != 0:
+            trend_score = float((ma_fast / ma_slow) - 1.0)
+
+        rsi_last = float(_rsi(close, RSI_PERIOD).iloc[-1]) if len(close) >= RSI_PERIOD else np.nan
+        atrp = _atr_pct(d, ATR_PERIOD) if len(d) >= ATR_PERIOD else np.nan
+        vol = float(ret.std(ddof=0)) if ret.notna().sum() >= 3 else np.nan
+        mdd = _max_drawdown(close)
+
+        look = int(min(max(2, lookback), max(2, len(close) - 1)))
+        prior = close.iloc[-look - 1 : -1] if len(close) >= look + 1 else close.iloc[:-1]
+        last_close = close.iloc[-1] if len(close) else np.nan
+
+        breakout = bool((len(prior) > 0) and (not pd.isna(last_close)) and (last_close > prior.max()))
+        breakdown = bool((len(prior) > 0) and (not pd.isna(last_close)) and (last_close < prior.min()))
+        above_slow = bool((not pd.isna(ma_slow)) and (not pd.isna(last_close)) and (last_close > ma_slow))
+
+        out_rows.append(
+            {
+                "Symbol": sym,
+                "MA_Fast": ma_fast,
+                "MA_Slow": ma_slow,
+                "Trend_Score": trend_score,
+                "RSI": rsi_last,
+                "ATR_pct": atrp,
+                "Volatility": vol,
+                "Max_Drawdown": mdd,
+                "Breakout": breakout,
+                "Breakdown": breakdown,
+                "Above_MA_Slow": above_slow,
+            }
+        )
+
+    tech = pd.DataFrame(out_rows)
+    latest_syms = pr.loc[pr["TradeDate"] == latest_date, "Symbol"].dropna().unique().tolist()
+    if latest_syms:
+        tech = tech[tech["Symbol"].isin(latest_syms)].copy()
+    return tech
+
+
+def compute_relative_strength(scored_sym: pd.DataFrame):
+    x = scored_sym.copy()
+    mom = pd.to_numeric(x.get("Momentum", np.nan), errors="coerce")
+    market_mom = float(np.nanmedian(mom.values)) if len(mom) else np.nan
+    x["Market_Momentum"] = market_mom
+    x["RS_Market"] = mom - market_mom
+
+    if "Sectors" in x.columns:
+        sec_avg = (
+            x.groupby("Sectors", as_index=False)["Momentum"]
+            .mean()
+            .rename(columns={"Momentum": "Sector_Momentum"})
+        )
+        x = x.merge(sec_avg, on="Sectors", how="left")
+        x["RS_Sector"] = x["Momentum"] - x["Sector_Momentum"]
+    else:
+        x["Sector_Momentum"] = np.nan
+        x["RS_Sector"] = np.nan
+
+    return x
 
 
 # =========================
@@ -347,7 +496,7 @@ def volume_surge(pr: pd.DataFrame, latest_date: pd.Timestamp):
 
 
 # =========================
-# SCORING: BUY/HOLD/SELL
+# SCORING: BUY/HOLD/SELL (UPGRADED)
 # =========================
 def classify_signal(score: pd.Series):
     bins = [-1e9, 50, 70, 1e9]
@@ -359,7 +508,11 @@ def build_trade_score(sym: pd.DataFrame):
     x = sym.copy()
 
     # Core ratios
-    x["Price_vs_VWAP"] = np.where(x["VWAP"].notna() & (x["VWAP"] > 0), (x["Last_Price"] / x["VWAP"]) - 1.0, np.nan)
+    x["Price_vs_VWAP"] = np.where(
+        x["VWAP"].notna() & (x["VWAP"] > 0) & x["Last_Price"].notna(),
+        (x["Last_Price"] / x["VWAP"]) - 1.0,
+        np.nan,
+    )
     x["Activity"] = np.log1p(x["Total_Qty"].fillna(0))
     x["Liq"] = np.log1p(x["Total_Amount_Cr"].fillna(0))
     x["BuyP"] = x["Buy_Pressure"].fillna(0)
@@ -369,30 +522,58 @@ def build_trade_score(sym: pd.DataFrame):
     x["VolSurge"] = x.get("Volume_Surge", np.nan)
     x["VolSurge"] = x["VolSurge"].replace([np.inf, -np.inf], np.nan).fillna(1.0)
 
+    # Technical & RS
+    x["Trend_Score"] = pd.to_numeric(x.get("Trend_Score", np.nan), errors="coerce").fillna(0.0)
+    x["RSI"] = pd.to_numeric(x.get("RSI", np.nan), errors="coerce")
+    x["ATR_pct"] = pd.to_numeric(x.get("ATR_pct", np.nan), errors="coerce")
+    x["Volatility"] = pd.to_numeric(x.get("Volatility", np.nan), errors="coerce")
+    x["Max_Drawdown"] = pd.to_numeric(x.get("Max_Drawdown", np.nan), errors="coerce")
+    x["RS_Market"] = pd.to_numeric(x.get("RS_Market", np.nan), errors="coerce").fillna(0.0)
+    x["RS_Sector"] = pd.to_numeric(x.get("RS_Sector", np.nan), errors="coerce").fillna(0.0)
+
+    # Risk penalty (higher = worse)
+    risk_pen = (
+        zscore(x["Volatility"].fillna(0)) * 10
+        + zscore(x["ATR_pct"].fillna(0)) * 8
+        + zscore((-x["Max_Drawdown"]).fillna(0)) * 10
+    )
+
     # Weighted raw score (tradeable mix)
     raw = (
-        zscore(x["Price_vs_VWAP"].fillna(0)) * 22
-        + zscore(x["Momentum"].fillna(0)) * 22
-        + zscore(x["Activity"]) * 12
-        + zscore(x["Liq"]) * 12
-        + (zscore(x["BuyP"]) - zscore(x["SellP"])) * 20
-        + zscore(np.log1p(x["VolSurge"].fillna(1.0))) * 12
+        zscore(x["Price_vs_VWAP"].fillna(0)) * 16
+        + zscore(x["Momentum"].fillna(0)) * 18
+        + zscore(x["Trend_Score"].fillna(0)) * 14
+        + zscore(x["RS_Market"].fillna(0)) * 10
+        + zscore(x["RS_Sector"].fillna(0)) * 8
+        + zscore(x["Activity"]) * 10
+        + zscore(x["Liq"]) * 10
+        + (zscore(x["BuyP"]) - zscore(x["SellP"])) * 18
+        + zscore(np.log1p(x["VolSurge"].fillna(1.0))) * 10
+        - risk_pen
     )
 
     raw_min, raw_max = float(raw.min()), float(raw.max())
     x["Score"] = np.where(raw_max > raw_min, 100 * (raw - raw_min) / (raw_max - raw_min), 50.0)
     x["Recommendation"] = classify_signal(x["Score"])
 
-    # ✅ NEPSE safety overrides (reduce trap BUY)
+    # ✅ NEPSE safety overrides
     x.loc[(x["Total_Amount_Cr"].fillna(0) < MIN_LIQ_CR_FOR_BUY) & (x["Recommendation"] == "BUY"), "Recommendation"] = "HOLD"
     x.loc[(x["Sell_Pressure"].fillna(0) >= SELL_WALL_TH), "Recommendation"] = "SELL / AVOID"
 
-    # Reasons / tags
-    reasons = []
-    insights = []
+    # Risk overrides
+    x.loc[(x["Volatility"].fillna(0) > MAX_VOLATILITY_FOR_BUY) & (x["Recommendation"] == "BUY"), "Recommendation"] = "HOLD"
+    x.loc[(x["Max_Drawdown"].fillna(0) < -MAX_DRAWDOWN_FOR_BUY) & (x["Recommendation"] == "BUY"), "Recommendation"] = "HOLD"
+
+    # RSI exhaustion handling
+    x.loc[(x["RSI"].fillna(50) >= RSI_OVERBOUGHT) & (x["Recommendation"] == "BUY"), "Recommendation"] = "HOLD"
+
+    if "Breakdown" in x.columns:
+        x.loc[(x["Breakdown"] == True), "Recommendation"] = "SELL / AVOID"
+
+    # Reasons / Insights
+    reasons, insights = [], []
     for _, r in x.iterrows():
-        tags = []
-        extra = []
+        tags, extra = [], []
 
         pvv = float(r.get("Price_vs_VWAP", 0) or 0)
         mom = float(r.get("Momentum", 0) or 0)
@@ -400,6 +581,14 @@ def build_trade_score(sym: pd.DataFrame):
         sp = float(r.get("Sell_Pressure", 0) or 0)
         liq = float(r.get("Total_Amount_Cr", 0) or 0)
         vsu = float(r.get("VolSurge", 1) or 1)
+        trend = float(r.get("Trend_Score", 0) or 0)
+        rsi = r.get("RSI", np.nan)
+        atrp = r.get("ATR_pct", np.nan)
+        vol = r.get("Volatility", np.nan)
+        rs_m = float(r.get("RS_Market", 0) or 0)
+        rs_s = float(r.get("RS_Sector", 0) or 0)
+        breakout = bool(r.get("Breakout", False) == True)
+        breakdown = bool(r.get("Breakdown", False) == True)
 
         if pvv > 0.01:
             tags.append("Above VWAP")
@@ -410,6 +599,16 @@ def build_trade_score(sym: pd.DataFrame):
             tags.append("Strong Momentum")
         elif mom < -0.03:
             tags.append("Weak Momentum")
+
+        if trend > 0.01:
+            tags.append("Uptrend (MA)")
+        elif trend < -0.01:
+            tags.append("Downtrend (MA)")
+
+        if rs_m > 0.02:
+            tags.append("Leader vs Market")
+        if rs_s > 0.02:
+            tags.append("Leader vs Sector")
 
         if bp >= BUY_DOM_TH:
             tags.append("Buyer Dominance")
@@ -424,18 +623,36 @@ def build_trade_score(sym: pd.DataFrame):
         if vsu >= VOL_SURGE_TH:
             tags.append("Volume Surge")
 
-        # advanced caution
-        if (bp >= 0.45) and (sp >= 0.45):
-            extra.append("⚠ Mixed Pressure (both sides strong)")
-        if (sp >= SELL_WALL_TH):
-            extra.append("🔴 Sell Wall / Distribution Risk")
-        if (liq < MIN_LIQ_CR_FOR_BUY):
-            extra.append("⚠ Low liquidity (easy manipulation)")
-        if (pvv > 0.03) and (vsu < 1.2):
-            extra.append("⚠ Price up but no volume confirmation")
+        if breakout and (vsu >= VOL_SURGE_TH):
+            tags.append("Breakout Confirmed")
+        elif breakout:
+            extra.append("⚠ Breakout w/o volume")
 
-        reasons.append(", ".join(tags[:5]))
-        insights.append(" | ".join(extra[:3]))
+        if breakdown:
+            extra.append("🔴 Breakdown risk")
+
+        if not pd.isna(rsi):
+            if rsi >= RSI_OVERBOUGHT:
+                extra.append("⚠ RSI overbought")
+            elif rsi <= RSI_OVERSOLD:
+                extra.append("🟢 RSI oversold")
+
+        if not pd.isna(vol) and vol > MAX_VOLATILITY_FOR_BUY:
+            extra.append("⚠ High volatility")
+        if not pd.isna(atrp) and atrp > 0.06:
+            extra.append("⚠ Wide ATR")
+
+        if (bp >= 0.45) and (sp >= 0.45):
+            extra.append("⚠ Mixed Pressure")
+        if (sp >= SELL_WALL_TH):
+            extra.append("🔴 Sell Wall")
+        if (liq < MIN_LIQ_CR_FOR_BUY):
+            extra.append("⚠ Low liquidity")
+        if (pvv > 0.03) and (vsu < 1.2):
+            extra.append("⚠ No volume confirmation")
+
+        reasons.append(", ".join(tags[:6]))
+        insights.append(" | ".join(extra[:4]))
 
     x["Reason"] = reasons
     x["Insight"] = insights
@@ -443,8 +660,7 @@ def build_trade_score(sym: pd.DataFrame):
 
 
 # =========================
-# SMART MONEY / INSTITUTION / OPERATOR
-# (same as your code – kept)
+# SMART MONEY / INSTITUTION / OPERATOR (kept core)
 # =========================
 def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timestamp, scored_symbols: pd.DataFrame):
     if symbol_level_broker.empty:
@@ -499,12 +715,17 @@ def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timesta
 
     sm_sym = sym_tot.merge(dom, on="Symbol", how="left")
 
-    cols = ["Symbol", "Company", "Sectors", "VWAP", "Last_Price", "Momentum", "Buy_Pressure", "Sell_Pressure", "Total_Amount_Cr"]
+    cols = [
+        "Symbol", "Company", "Sectors", "VWAP", "Last_Price", "Momentum",
+        "Buy_Pressure", "Sell_Pressure", "Total_Amount_Cr",
+        "Trend_Score", "RSI", "Volatility", "Max_Drawdown",
+        "RS_Market", "RS_Sector", "Breakout", "Breakdown"
+    ]
     ctx = scored_symbols[[c for c in cols if c in scored_symbols.columns]].drop_duplicates("Symbol")
     sm_sym = sm_sym.merge(ctx, on="Symbol", how="left")
 
     sm_sym["Price_vs_VWAP_pct"] = np.where(
-        sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0),
+        sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0) & sm_sym["Last_Price"].notna(),
         (sm_sym["Last_Price"] / sm_sym["VWAP"] - 1) * 100, np.nan
     )
 
@@ -680,12 +901,12 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
 
 
 # =========================
-# TRADE SETUPS (NEW SHEET)
+# TRADE SETUPS (UPGRADED)
 # =========================
 def build_trade_setups(scored: pd.DataFrame, smart_money: pd.DataFrame, operator_radar: pd.DataFrame, wname: str):
     """
-    Creates an actionable shortlist per window:
-    - Prefer BUY/HOLD with strong confirmation
+    Actionable shortlist per window:
+    - Breakout / Pullback / Mean-Reversion tags with confirmations
     - Avoid sell wall & thin liquidity
     - Prefer SmartMoney accumulation/early
     - Add trap flags if operator pressure is high
@@ -693,12 +914,18 @@ def build_trade_setups(scored: pd.DataFrame, smart_money: pd.DataFrame, operator
     if scored.empty:
         return pd.DataFrame(columns=[
             "Window", "Symbol", "Company", "Sectors",
-            "Score", "Recommendation", "Total_Amount_Cr", "Momentum", "Buy_Pressure", "Sell_Pressure", "Volume_Surge",
-            "SmartMoneyScore", "SmartMoneySignal", "Trap_Flag", "Setup_Tag", "Reason", "Insight"
+            "Score", "Recommendation", "Total_Amount_Cr", "Momentum",
+            "Buy_Pressure", "Sell_Pressure", "Volume_Surge",
+            "Trend_Score", "RSI", "ATR_pct", "Volatility", "Max_Drawdown",
+            "RS_Market", "RS_Sector", "Breakout", "Breakdown",
+            "SmartMoneyScore", "SmartMoneySignal",
+            "Trap_Flag", "Setup_Tag", "Position_Sizing_Hint",
+            "Reason", "Insight"
         ])
 
     x = scored.copy()
 
+    # Smart money join
     sm = smart_money.copy()
     if not sm.empty and "Window" in sm.columns:
         sm = sm[sm["Window"] == wname].copy()
@@ -710,18 +937,37 @@ def build_trade_setups(scored: pd.DataFrame, smart_money: pd.DataFrame, operator
         x["SmartMoneyScore"] = np.nan
         x["SmartMoneySignal"] = ""
 
-    # Operator trap: if operator radar says very high, warn
+    # Operator trap flag
     trap = pd.DataFrame(columns=["Symbol", "Trap_Flag"])
     if not operator_radar.empty and "Window" in operator_radar.columns:
         opr = operator_radar[operator_radar["Window"] == wname].copy()
         if not opr.empty and "OperatorScore" in opr.columns:
             t = opr.groupby("Symbol", as_index=False)["OperatorScore"].max()
-            t["Trap_Flag"] = np.where(t["OperatorScore"] >= 75, "⚠ OPERATOR_HEAVY", np.where(t["OperatorScore"] >= 55, "WATCH_OPR", "OK"))
+            t["Trap_Flag"] = np.where(
+                t["OperatorScore"] >= 75, "⚠ OPERATOR_HEAVY",
+                np.where(t["OperatorScore"] >= 55, "WATCH_OPR", "OK")
+            )
             trap = t[["Symbol", "Trap_Flag"]]
+
     x = x.merge(trap, on="Symbol", how="left")
     x["Trap_Flag"] = x["Trap_Flag"].fillna("OK")
 
-    # Setup tag logic (practical)
+    # Position sizing hint (simple risk model using ATR%)
+    def pos_size_hint(atr_pct):
+        try:
+            a = float(atr_pct)
+        except Exception:
+            return ""
+        if pd.isna(a) or a <= 0:
+            return ""
+        # rough: if stop is ~2*ATR then risk per trade is ACCOUNT_RISK_PCT
+        # position% = risk% / (2*ATR%)
+        pos = (ACCOUNT_RISK_PCT / (2.0 * a)) * 100.0
+        pos = float(np.clip(pos, MIN_POSITION_PCT, MAX_POSITION_PCT))
+        return f"{pos:.1f}% of capital"
+
+    x["Position_Sizing_Hint"] = x.get("ATR_pct", np.nan).apply(pos_size_hint)
+
     def setup_tag(r):
         liq = float(r.get("Total_Amount_Cr", 0) or 0)
         sp = float(r.get("Sell_Pressure", 0) or 0)
@@ -729,43 +975,173 @@ def build_trade_setups(scored: pd.DataFrame, smart_money: pd.DataFrame, operator
         vs = float(r.get("Volume_Surge", 1) or 1)
         smsig = str(r.get("SmartMoneySignal", "") or "")
         rec = str(r.get("Recommendation", "") or "")
+        trend = float(r.get("Trend_Score", 0) or 0)
+        rsi = r.get("RSI", np.nan)
+        breakout = bool(r.get("Breakout", False) == True)
+        breakdown = bool(r.get("Breakdown", False) == True)
 
+        if breakdown:
+            return "🔴 BREAKDOWN_AVOID"
         if sp >= SELL_WALL_TH:
             return "AVOID_SELL_WALL"
         if liq < MIN_LIQ_CR_FOR_BUY:
             return "LOW_LIQ_RISK"
 
-        # Strong setup
-        if (rec == "BUY") and (liq >= MIN_LIQ_CR_FOR_STRONG) and (vs >= VOL_SURGE_TH) and (bp >= BUY_DOM_TH) and (smsig.startswith("🟢") or smsig.startswith("🟡")):
-            return "🟢 STRONG_SETUP"
+        sm_ok = (smsig.startswith("🟢") or smsig.startswith("🟡"))
 
-        # Early setup
-        if (rec in ["BUY", "HOLD"]) and (liq >= MIN_LIQ_CR_FOR_BUY) and (bp >= 0.40) and (smsig.startswith("🟡") or smsig.startswith("⚪")):
-            return "🟡 EARLY_SETUP"
+        # Breakout setup
+        if breakout:
+            if (vs >= VOL_SURGE_TH) and (bp >= BUY_DOM_TH) and (trend >= 0) and sm_ok and (rec in ["BUY", "HOLD"]):
+                return "🟢 BREAKOUT_CONFIRMED"
+            return "🟡 BREAKOUT_WATCH"
 
-        # Normal watch
+        # Pullback in uptrend
+        if (trend > 0.01) and (rec in ["BUY", "HOLD"]):
+            if (not pd.isna(rsi)) and (rsi <= 45) and sm_ok and (bp >= 0.40) and (liq >= MIN_LIQ_CR_FOR_BUY):
+                return "🟢 PULLBACK_BUY_ZONE"
+            return "🟡 PULLBACK_WATCH"
+
+        # Mean reversion (oversold bounce candidates)
+        if (not pd.isna(rsi)) and (rsi <= RSI_OVERSOLD) and (liq >= MIN_LIQ_CR_FOR_BUY) and (sp < SELL_WALL_TH):
+            return "🟡 MEAN_REVERSION"
+
+        # Default: watchlist/normal
+        if rec == "BUY" and liq >= MIN_LIQ_CR_FOR_STRONG and sm_ok:
+            return "🟢 MOMENTUM_BUY"
         if rec == "HOLD":
             return "WATCHLIST"
-
         return "NORMAL"
 
     x["Setup_Tag"] = x.apply(setup_tag, axis=1)
 
     keep = [
         "Window", "Symbol", "Company", "Sectors",
-        "Score", "Recommendation", "Total_Amount_Cr", "Momentum", "Buy_Pressure", "Sell_Pressure", "Volume_Surge",
-        "SmartMoneyScore", "SmartMoneySignal", "Trap_Flag", "Setup_Tag", "Reason", "Insight"
+        "Score", "Recommendation", "Total_Amount_Cr", "Momentum",
+        "Buy_Pressure", "Sell_Pressure", "Volume_Surge",
+        "Trend_Score", "RSI", "ATR_pct", "Volatility", "Max_Drawdown",
+        "RS_Market", "RS_Sector", "Breakout", "Breakdown",
+        "SmartMoneyScore", "SmartMoneySignal",
+        "Trap_Flag", "Setup_Tag", "Position_Sizing_Hint",
+        "Reason", "Insight"
     ]
     out = x[[c for c in keep if c in x.columns]].copy()
 
-    # Sort: strong setups first
+    # Ranking: prioritize confirmed breakouts & pullback buy zones
     out["_rank"] = 0
-    out.loc[out["Setup_Tag"] == "🟢 STRONG_SETUP", "_rank"] = 3
-    out.loc[out["Setup_Tag"] == "🟡 EARLY_SETUP", "_rank"] = 2
+    out.loc[out["Setup_Tag"] == "🟢 BREAKOUT_CONFIRMED", "_rank"] = 5
+    out.loc[out["Setup_Tag"] == "🟢 PULLBACK_BUY_ZONE", "_rank"] = 4
+    out.loc[out["Setup_Tag"] == "🟢 MOMENTUM_BUY", "_rank"] = 3
+    out.loc[out["Setup_Tag"].astype(str).str.startswith("🟡"), "_rank"] = 2
     out.loc[out["Setup_Tag"] == "WATCHLIST", "_rank"] = 1
 
     out = out.sort_values(["_rank", "Score", "Total_Amount_Cr"], ascending=[False, False, False]).drop(columns=["_rank"])
-    return out.head(80)
+    return out.head(120)
+
+
+# =========================
+# MARKET BREADTH + RISK GRID (NEW)
+# =========================
+def build_market_breadth(scored: pd.DataFrame, wname: str):
+    if scored.empty:
+        return pd.DataFrame(columns=["Window", "Metric", "Value"])
+
+    x = scored.copy()
+    n = int(x["Symbol"].nunique()) if "Symbol" in x.columns else 0
+    if n <= 0:
+        return pd.DataFrame(columns=["Window", "Metric", "Value"])
+
+    uptrend = int((x.get("Above_MA_Slow", False) == True).sum()) if "Above_MA_Slow" in x.columns else 0
+    breakouts = int((x.get("Breakout", False) == True).sum()) if "Breakout" in x.columns else 0
+    breakdowns = int((x.get("Breakdown", False) == True).sum()) if "Breakdown" in x.columns else 0
+    buys = int((x.get("Recommendation", "") == "BUY").sum()) if "Recommendation" in x.columns else 0
+    holds = int((x.get("Recommendation", "") == "HOLD").sum()) if "Recommendation" in x.columns else 0
+    sells = int((x.get("Recommendation", "") == "SELL / AVOID").sum()) if "Recommendation" in x.columns else 0
+
+    def pct(v):
+        return round(100.0 * v / n, 2) if n else np.nan
+
+    rows = [
+        {"Window": wname, "Metric": "Total Symbols", "Value": n},
+        {"Window": wname, "Metric": "% Uptrend (Above MA_Slow)", "Value": pct(uptrend)},
+        {"Window": wname, "Metric": "% Breakouts", "Value": pct(breakouts)},
+        {"Window": wname, "Metric": "% Breakdowns", "Value": pct(breakdowns)},
+        {"Window": wname, "Metric": "% BUY", "Value": pct(buys)},
+        {"Window": wname, "Metric": "% HOLD", "Value": pct(holds)},
+        {"Window": wname, "Metric": "% SELL/AVOID", "Value": pct(sells)},
+        {"Window": wname, "Metric": "Median Momentum", "Value": float(np.nanmedian(pd.to_numeric(x.get("Momentum", np.nan), errors="coerce"))) if "Momentum" in x.columns else np.nan},
+        {"Window": wname, "Metric": "Median RS_Market", "Value": float(np.nanmedian(pd.to_numeric(x.get("RS_Market", np.nan), errors="coerce"))) if "RS_Market" in x.columns else np.nan},
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_risk_grid(scored: pd.DataFrame):
+    if scored.empty:
+        return pd.DataFrame(columns=[
+            "Window", "Symbol", "Company", "Sectors",
+            "ATR_pct", "Volatility", "Max_Drawdown",
+            "Risk_Level", "Position_Sizing_Hint", "StopLoss_Hint",
+            "Recommendation", "Score"
+        ])
+
+    x = scored.copy()
+
+    # Risk level (rule-of-thumb)
+    def risk_level(r):
+        atr = r.get("ATR_pct", np.nan)
+        vol = r.get("Volatility", np.nan)
+        mdd = r.get("Max_Drawdown", np.nan)
+
+        atr = float(atr) if not pd.isna(atr) else np.nan
+        vol = float(vol) if not pd.isna(vol) else np.nan
+        mdd = float(mdd) if not pd.isna(mdd) else np.nan
+
+        high = 0
+        if (not pd.isna(atr)) and atr >= 0.07:
+            high += 1
+        if (not pd.isna(vol)) and vol >= 0.08:
+            high += 1
+        if (not pd.isna(mdd)) and mdd <= -0.30:
+            high += 1
+
+        if high >= 2:
+            return "HIGH"
+        if high == 1:
+            return "MEDIUM"
+        return "LOW"
+
+    def pos_size_hint(atr_pct):
+        try:
+            a = float(atr_pct)
+        except Exception:
+            return ""
+        if pd.isna(a) or a <= 0:
+            return ""
+        pos = (ACCOUNT_RISK_PCT / (2.0 * a)) * 100.0
+        pos = float(np.clip(pos, MIN_POSITION_PCT, MAX_POSITION_PCT))
+        return f"{pos:.1f}% of capital"
+
+    def stop_hint(atr_pct):
+        try:
+            a = float(atr_pct)
+        except Exception:
+            return ""
+        if pd.isna(a) or a <= 0:
+            return ""
+        # Approx stop distance: 2*ATR%
+        return f"Stop ~{(2*a*100):.1f}% below entry"
+
+    x["Risk_Level"] = x.apply(risk_level, axis=1)
+    x["Position_Sizing_Hint"] = x.get("ATR_pct", np.nan).apply(pos_size_hint)
+    x["StopLoss_Hint"] = x.get("ATR_pct", np.nan).apply(stop_hint)
+
+    keep = [
+        "Window", "Symbol", "Company", "Sectors",
+        "ATR_pct", "Volatility", "Max_Drawdown",
+        "Risk_Level", "Position_Sizing_Hint", "StopLoss_Hint",
+        "Recommendation", "Score"
+    ]
+    out = x[[c for c in keep if c in x.columns]].copy()
+    return out.sort_values(["Window", "Risk_Level", "Score"], ascending=[True, True, False])
 
 
 # =========================
@@ -820,7 +1196,6 @@ def find_col(ws, header_name: str):
 
 
 def apply_recommendation_cf(ws, rec_col_name="Recommendation"):
-    # ✅ FIXED: uses row-relative formula
     col = find_col(ws, rec_col_name)
     if not col or ws.max_row < 2:
         return
@@ -899,11 +1274,10 @@ def write_excel_report(path: Path, sheets: dict, charts_config: list):
         add_table(ws, df, name=f"T{i}")
 
         apply_recommendation_cf(ws, "Recommendation")
-        apply_score_scale(ws, "Score")
-        apply_score_scale(ws, "SmartMoneyScore")
-        apply_score_scale(ws, "InstitutionScore")
-        apply_score_scale(ws, "OperatorScore")
-        apply_score_scale(ws, "SmartBrokerScore")
+
+        # common score scales (if present)
+        for col in ["Score", "SmartMoneyScore", "InstitutionScore", "OperatorScore", "SmartBrokerScore"]:
+            apply_score_scale(ws, col)
 
         auto_fit_columns(ws)
 
@@ -949,6 +1323,7 @@ def main():
     floor_map = {d: f for d, f in zip(floor_dates, floor_files)}
     price_map = {d: f for d, f in zip(price_dates, price_files)}
 
+    # Collectors
     symbol_summary_all = []
     top_picks_all = []
     broker_summary_all = []
@@ -961,6 +1336,7 @@ def main():
     inst_all = []
     opr_all = []
     trade_setups_all = []
+    breadth_all = []
 
     for wname, n in WINDOWS.items():
         w_dates = choose_window_dates(trading_dates, n)
@@ -992,11 +1368,13 @@ def main():
             if not pr.empty else pd.DataFrame(columns=["Symbol", "Close_latest", "Last_Price", "VWAP", "Vol", "Turnover"])
         )
 
+        # Symbol level from floorsheet
         sym = symbol_metrics_from_floorsheet(fs) if not fs.empty else pd.DataFrame(
             columns=["Symbol", "Trades", "Total_Qty", "Total_Amount", "VWAP", "Total_Amount_Cr"]
         )
         sym = sym.merge(price_latest[["Symbol", "Last_Price", "Vol", "Turnover", "VWAP"]], on="Symbol", how="left")
 
+        # Broker-symbol daily + window aggregation
         bs_daily = broker_symbol_metrics(fs) if not fs.empty else pd.DataFrame(
             columns=["TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr"]
         )
@@ -1013,16 +1391,30 @@ def main():
         else:
             bs_window = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr", "Active_Days"])
 
-        # ✅ Pressure with TopN by window
+        # Pressure with TopN by window
         ptopn = PRESSURE_TOPN.get(wname, 10)
         pressure = compute_pressure(bs_window, topn=ptopn)
 
+        # Momentum + volume surge
         mom = momentum_from_prices(pr, w_latest)
         vs = volume_surge(pr, w_latest)
 
-        sym = sym.merge(pressure, on="Symbol", how="left").merge(mom, on="Symbol", how="left").merge(vs, on="Symbol", how="left")
-        sym = sym.merge(sector, on="Symbol", how="left")
+        # Technicals
+        look = int(min(BREAKOUT_LOOKBACK, max(5, len(w_dates))))
+        tech = technicals_from_prices(pr, w_latest, lookback=look)
 
+        sym = (
+            sym.merge(pressure, on="Symbol", how="left")
+               .merge(mom, on="Symbol", how="left")
+               .merge(vs, on="Symbol", how="left")
+               .merge(tech, on="Symbol", how="left")
+               .merge(sector, on="Symbol", how="left")
+        )
+
+        # Relative strength (needs Momentum + sector)
+        sym = compute_relative_strength(sym)
+
+        # Score + recommendation
         scored = build_trade_score(sym)
 
         keep_cols = [
@@ -1031,25 +1423,37 @@ def main():
             "VWAP", "Last_Price",
             "Buy_Pressure", "Sell_Pressure",
             "Volume_Surge",
-            "Momentum", "Score", "Recommendation", "Reason", "Insight"
+            "Momentum",
+            "MA_Fast", "MA_Slow", "Trend_Score",
+            "RSI", "ATR_pct", "Volatility", "Max_Drawdown",
+            "Breakout", "Breakdown", "Above_MA_Slow",
+            "RS_Market", "RS_Sector",
+            "Score", "Recommendation", "Reason", "Insight"
         ]
         scored = scored[[c for c in keep_cols if c in scored.columns]].copy()
 
-        for c in ["VWAP", "Last_Price"]:
+        # Rounding
+        for c in ["VWAP", "Last_Price", "MA_Fast", "MA_Slow"]:
             if c in scored.columns:
                 scored[c] = pd.to_numeric(scored[c], errors="coerce").round(2)
         for c in ["Total_Amount_Cr"]:
             if c in scored.columns:
                 scored[c] = pd.to_numeric(scored[c], errors="coerce").round(3)
-        for c in ["Buy_Pressure", "Sell_Pressure", "Volume_Surge"]:
+        for c in ["Buy_Pressure", "Sell_Pressure", "Volume_Surge", "Trend_Score", "RS_Market", "RS_Sector"]:
             if c in scored.columns:
                 scored[c] = pd.to_numeric(scored[c], errors="coerce").round(3)
-        for c in ["Momentum", "Score"]:
+        for c in ["Momentum", "Score", "RSI"]:
             if c in scored.columns:
                 scored[c] = pd.to_numeric(scored[c], errors="coerce").round(2)
+        for c in ["ATR_pct", "Volatility", "Max_Drawdown"]:
+            if c in scored.columns:
+                scored[c] = pd.to_numeric(scored[c], errors="coerce").round(4)
 
         scored.insert(0, "Window", wname)
         symbol_summary_all.append(scored)
+
+        # Market breadth
+        breadth_all.append(build_market_breadth(scored, wname))
 
         # Top picks
         tp = scored.copy()
@@ -1058,7 +1462,7 @@ def main():
         top_hold = tp[tp["Recommendation"] == "HOLD"].sort_values("Score", ascending=False).head(20).assign(List="TOP_HOLD")
         top_picks_all.append(pd.concat([top_buy, top_hold, top_sell], ignore_index=True))
 
-        # Broker summary
+        # Broker summary + broker-by-symbol
         if not bs_window.empty:
             bsum = bs_window.groupby("Broker", as_index=False).agg(
                 Buy_Qty=("Buy_Qty", "sum"),
@@ -1073,7 +1477,6 @@ def main():
             bsum.insert(0, "Window", wname)
             broker_summary_all.append(bsum)
 
-            # ✅ Broker-by-symbol top lists (TopN by window)
             btopn = BROKER_SYMBOL_TOPN.get(wname, 10)
             tb = top_net_brokers(bs_window, topn=btopn)
             tb = tb.merge(brokers_master, on="Broker", how="left")
@@ -1096,7 +1499,7 @@ def main():
         }
         market_overview_rows.append(mrow)
 
-        # Price movers
+        # Price movers (window return %)
         if not pr.empty and pr["TradeDate"].nunique() >= 2:
             p = pr.sort_values(["Symbol", "TradeDate"])
             first = p.groupby("Symbol", as_index=False).first()[["Symbol", "Close"]].rename(columns={"Close": "Close_start"})
@@ -1114,6 +1517,7 @@ def main():
                 Amount_Cr=("Total_Amount_Cr", "sum"),
                 Avg_Score=("Score", "mean"),
                 Avg_Momentum=("Momentum", "mean") if "Momentum" in scored.columns else ("Score", "mean"),
+                Avg_RS_Market=("RS_Market", "mean") if "RS_Market" in scored.columns else ("Score", "mean"),
             )
             sector_summary_all.append(sec.sort_values(["Window", "Amount_Cr"], ascending=[True, False]))
 
@@ -1135,7 +1539,7 @@ def main():
         inst_all.append(inst)
         opr_all.append(opr)
 
-        # ✅ Trade setups sheet per window (new)
+        # Trade setups per window
         setups = build_trade_setups(scored, sm_sym, opr, wname)
         trade_setups_all.append(setups)
 
@@ -1152,6 +1556,8 @@ def main():
     inst_tracker = pd.concat(inst_all, ignore_index=True) if inst_all else pd.DataFrame()
     operator_radar = pd.concat(opr_all, ignore_index=True) if opr_all else pd.DataFrame()
     trade_setups = pd.concat(trade_setups_all, ignore_index=True) if trade_setups_all else pd.DataFrame()
+    breadth = pd.concat(breadth_all, ignore_index=True) if breadth_all else pd.DataFrame()
+    risk_grid = build_risk_grid(symbol_summary) if not symbol_summary.empty else pd.DataFrame()
 
     # Chart-friendly sheets
     sm_chart = pd.DataFrame()
@@ -1194,10 +1600,14 @@ def main():
         [
             ["Advanced Trading Insight Report", ""],
             ["Windows", "1D=1 trading day, 7D=7 trading days, 15D=15 trading days, 1M=30 trading days (based on available files)"],
-            ["BUY/HOLD/SELL", "Score (0-100): BUY>=70, HOLD 50-69, SELL/AVOID<50 (with liquidity & sell-wall overrides)"],
+            ["BUY/HOLD/SELL", "Score (0-100): BUY>=70, HOLD 50-69, SELL/AVOID<50 (with liquidity, sell-wall, risk overrides)"],
             ["Pressure Top-N", "1D=4, 7D=5, 15D+=10 (both pressure & broker-by-symbol top lists)"],
             ["Volume Surge", "Volume_Surge = latest Vol / avg Vol in window (>=1.5 is strong confirmation)"],
-            ["Trade_Setups", "Shortlist using: Score + Liquidity + Buy/Sell pressure + Volume surge + Smart Money + Operator traps"],
+            ["Technicals", f"MA({MA_FAST}/{MA_SLOW}), RSI({RSI_PERIOD}), ATR%({ATR_PERIOD}), Volatility, Max Drawdown, Breakout({BREAKOUT_LOOKBACK})"],
+            ["Relative Strength", "RS_Market = Momentum - Market median; RS_Sector = Momentum - Sector mean"],
+            ["Market_Breadth", "Shows % uptrend / breakouts / buy signals per window"],
+            ["Risk_Grid", "Risk level and position sizing hint based on ATR% (rule-of-thumb)"],
+            ["Trade_Setups", "Shortlist using: Score + Liquidity + Pressure + Volume surge + Smart Money + Operator traps + technical regime"],
             ["Smart Money", "Uses broker net flows, capital deployed, persistence, concentration & price behavior to score accumulation/distribution."],
             ["Institution Tracker", "Behavior-based: persistence + breadth + net flow + capital; penalizes flip & high concentration."],
             ["Operator Radar", "Behavior-based: high concentration + flip + burst + chasing; shows likely operators per broker-symbol."],
@@ -1211,6 +1621,8 @@ def main():
     sheets = {
         "README": readme,
         "Market_Overview": market_overview.sort_values("Window"),
+        "Market_Breadth": breadth,
+        "Risk_Grid": risk_grid,
         "Trade_Setups": trade_setups,
         "Top_Picks": top_picks,
         "Symbol_Summary": symbol_summary,
