@@ -55,6 +55,14 @@ OUT_DIR = ROOT / "outputs"
 PRICE_DIR = OUT_DIR / "sharesansar"
 REPORT_DIR = OUT_DIR / "reports"
 
+# Some repos store floorsheets inside a subfolder like outputs/"Floor Sheet"
+FLOOR_DIR_CANDIDATES = [
+    OUT_DIR,
+    OUT_DIR / "Floor Sheet",
+    OUT_DIR / "FloorSheet",
+    OUT_DIR / "floorsheet",
+]
+
 SECTOR_MASTER = OUT_DIR / "Sector" / "sector_master.csv"
 BROKER_MASTER = OUT_DIR / "Brokers" / "broker_master.csv"
 
@@ -115,12 +123,23 @@ def clamp(x, lo, hi):
 # Locate input files
 # -----------------------------
 def list_floor_files() -> list[tuple[datetime, Path]]:
-    files = []
-    for p in OUT_DIR.glob("floorsheet_*.csv"):
-        m = FLOOR_PATTERN.search(p.name)
-        if m:
-            files.append((parse_date(m.group(1)), p))
-    return sorted(files, key=lambda x: x[0])
+    files: list[tuple[datetime, Path]] = []
+    # Search in multiple possible folders (handles outputs/Floor Sheet structure)
+    for base in FLOOR_DIR_CANDIDATES:
+        if not base.exists():
+            continue
+        for p in base.glob('floorsheet_*.csv'):
+            m = FLOOR_PATTERN.search(p.name)
+            if m:
+                files.append((parse_date(m.group(1)), p))
+    if not files:
+        return []
+    files = sorted(files, key=lambda x: x[0])
+    # De-duplicate by date (keep last path if duplicates exist)
+    dedup = {}
+    for d, p in files:
+        dedup[d] = p
+    return sorted([(d, p) for d, p in dedup.items()], key=lambda x: x[0])
 
 def list_price_files() -> list[tuple[datetime, Path]]:
     files = []
@@ -710,7 +729,7 @@ def main():
     price_list = list_price_files()
 
     if not floor_list:
-        raise SystemExit("❌ No floorsheet_YYYY-MM-DD.csv found in outputs/")
+        raise SystemExit("❌ No floorsheet_YYYY-MM-DD.csv found. Checked: outputs/, outputs/Floor Sheet/, outputs/FloorSheet/")
     if not price_list:
         raise SystemExit("❌ No SharePrice_YYYY-MM-DD.csv found in outputs/sharesansar/")
 
