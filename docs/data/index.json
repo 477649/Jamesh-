@@ -1,6 +1,126 @@
 {
   "files": [
     {
+      "date": "2025-11-25",
+      "file": "data/floorsheet_2025-11-25.csv"
+    },
+    {
+      "date": "2025-11-26",
+      "file": "data/floorsheet_2025-11-26.csv"
+    },
+    {
+      "date": "2025-11-27",
+      "file": "data/floorsheet_2025-11-27.csv"
+    },
+    {
+      "date": "2025-11-30",
+      "file": "data/floorsheet_2025-11-30.csv"
+    },
+    {
+      "date": "2025-12-01",
+      "file": "data/floorsheet_2025-12-01.csv"
+    },
+    {
+      "date": "2025-12-02",
+      "file": "data/floorsheet_2025-12-02.csv"
+    },
+    {
+      "date": "2025-12-03",
+      "file": "data/floorsheet_2025-12-03.csv"
+    },
+    {
+      "date": "2025-12-07",
+      "file": "data/floorsheet_2025-12-07.csv"
+    },
+    {
+      "date": "2025-12-08",
+      "file": "data/floorsheet_2025-12-08.csv"
+    },
+    {
+      "date": "2025-12-09",
+      "file": "data/floorsheet_2025-12-09.csv"
+    },
+    {
+      "date": "2025-12-10",
+      "file": "data/floorsheet_2025-12-10.csv"
+    },
+    {
+      "date": "2025-12-11",
+      "file": "data/floorsheet_2025-12-11.csv"
+    },
+    {
+      "date": "2025-12-14",
+      "file": "data/floorsheet_2025-12-14.csv"
+    },
+    {
+      "date": "2025-12-15",
+      "file": "data/floorsheet_2025-12-15.csv"
+    },
+    {
+      "date": "2025-12-16",
+      "file": "data/floorsheet_2025-12-16.csv"
+    },
+    {
+      "date": "2025-12-17",
+      "file": "data/floorsheet_2025-12-17.csv"
+    },
+    {
+      "date": "2025-12-18",
+      "file": "data/floorsheet_2025-12-18.csv"
+    },
+    {
+      "date": "2025-12-21",
+      "file": "data/floorsheet_2025-12-21.csv"
+    },
+    {
+      "date": "2025-12-22",
+      "file": "data/floorsheet_2025-12-22.csv"
+    },
+    {
+      "date": "2025-12-23",
+      "file": "data/floorsheet_2025-12-23.csv"
+    },
+    {
+      "date": "2025-12-24",
+      "file": "data/floorsheet_2025-12-24.csv"
+    },
+    {
+      "date": "2025-12-28",
+      "file": "data/floorsheet_2025-12-28.csv"
+    },
+    {
+      "date": "2025-12-29",
+      "file": "data/floorsheet_2025-12-29.csv"
+    },
+    {
+      "date": "2025-12-31",
+      "file": "data/floorsheet_2025-12-31.csv"
+    },
+    {
+      "date": "2026-01-01",
+      "file": "data/floorsheet_2026-01-01.csv"
+    },
+    {
+      "date": "2026-01-04",
+      "file": "data/floorsheet_2026-01-04.csv"
+    },
+    {
+      "date": "2026-01-05",
+      "file": "data/floorsheet_2026-01-05.csv"
+    },
+    {
+      "date": "2026-01-06",
+      "file": "data/floorsheet_2026-01-06.csv"
+    },
+    {
+      "date": "2026-01-07",
+      "file": "data/floorsheet_2026-01-07.csv"
+    },
+    {
+      "date": "2026-01-08",
+      "file": "data/floorsheet_2026-01-08.csv"
+    },
+    {
       "date": "2026-01-12",
       "file": "data/floorsheet_2026-01-12.csv"
     },
@@ -29,9 +149,9 @@
       "file": "data/floorsheet_2026-01-23.csv"
     },
     {
-      "date": "2026-01-25",
-      "file": "data/floorsheet_2026-01-25.csv"
+      "date": "2026-01-26",
+      "file": "data/floorsheet_2026-01-26.csv"
     }
   ],
-  "latest": "2026-01-25"
+  "latest": "2026-01-26"
 }
