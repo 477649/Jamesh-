@@ -149,6 +149,10 @@
       "file": "data/floorsheet_2026-01-23.csv"
     },
     {
+      "date": "2026-01-25",
+      "file": "data/floorsheet_2026-01-25.csv"
+    },
+    {
       "date": "2026-01-26",
       "file": "data/floorsheet_2026-01-26.csv"
     }
