@@ -11,13 +11,16 @@ from openpyxl.utils import get_column_letter
 # =========================
 # PATHS (your requirement)
 # =========================
-DATA_DIR = "outputs/sharesansar"                 # INPUT daily share price CSVs
-SECTOR_FILE = "outputs/Sector/sector_master.csv" # Sector master file (Symbol -> Sector/Company)
-OUT_DIR  = "outputs/PriceAction"                # OUTPUT folder
+DATA_DIR = "outputs/sharesansar"                  # INPUT daily share price CSVs
+SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -> Sector/Company)
+OUT_DIR  = "outputs/PriceAction"                  # OUTPUT folder
 OUT_PATH = os.path.join(OUT_DIR, "nepse_signals.xlsx")
 
 # Load latest N trading-day files (not calendar filtering)
 LATEST_FILES_TO_LOAD = 60
+
+# Use 15-day context (you asked: no 20-day for key logic)
+CONTEXT_DAYS = 15
 # =========================
 
 
@@ -70,7 +73,6 @@ def load_sector_master(path):
     df = pd.read_csv(path)
     df.columns = [c.strip() for c in df.columns]
 
-    # expected minimum: Symbol + Sector
     if "Symbol" not in df.columns:
         raise ValueError("sector_master.csv must contain column: Symbol")
 
@@ -88,17 +90,9 @@ def load_sector_master(path):
             company_col = c
             break
 
-    out = df[["Symbol", sector_col]].copy()
-    out = out.rename(columns={sector_col: "Sector"})
-
-    if company_col:
-        out["Company"] = df[company_col]
-    else:
-        out["Company"] = None
-
-    # keep last occurrence per Symbol if duplicates
-    out = out.drop_duplicates(subset=["Symbol"], keep="last")
-    return out
+    out = df[["Symbol", sector_col]].copy().rename(columns={sector_col: "Sector"})
+    out["Company"] = df[company_col] if company_col else None
+    return out.drop_duplicates(subset=["Symbol"], keep="last")
 
 
 # ---------- INDICATORS ----------
@@ -120,18 +114,18 @@ def true_range(h, l, c):
 def add_features(g):
     g = g.copy()
 
-    # windows you requested
+    # windows you use
     for n in [7, 10, 15, 20]:
         g[f"MA{n}"] = g["Close"].rolling(n).mean()
         g[f"VMA{n}"] = g["Volume"].rolling(n).mean()
 
-    # breakout context
+    # breakout context (15D)
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
 
     # candle / price-action
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
-    g["ClosePos"] = ((g["Close"] - g["Low"]) / rng).clip(0, 1)  # 0 close at low, 1 close at high
+    g["ClosePos"] = ((g["Close"] - g["Low"]) / rng).clip(0, 1)
     g["UpperWickPct"] = ((g["High"] - g[["Open", "Close"]].max(axis=1)) / rng).clip(0, 1)
 
     # momentum
@@ -141,15 +135,18 @@ def add_features(g):
     g["RET15"] = g["Close"].pct_change(15) * 100
     g["RET20"] = g["Close"].pct_change(20) * 100
 
-    # volatility / compression
+    # volatility / compression: compare TR7 vs TR15
     g["TR"] = true_range(g["High"], g["Low"], g["Close"])
     g["TR7"] = g["TR"].rolling(7).mean()
-    g["TR20"] = g["TR"].rolling(20).mean()
-    g["Compression"] = g["TR7"] / (g["TR20"] + 1e-12)  # <1 = compressed
+    g["TR15"] = g["TR"].rolling(CONTEXT_DAYS).mean()
+    g["Compression"] = g["TR7"] / (g["TR15"] + 1e-12)  # <1 = compressed
 
-    # for distribution rules
+    # distribution helpers
     g["RedDay"] = g["Close"] <= g["Open"]
-    g["VolSpike"] = g["Volume"] > 1.5 * g["VMA20"]
+
+    # ✅ UPDATED: VolSpike uses 15-day volume average (not 20)
+    g["VolSpike"] = g["Volume"] > 1.5 * g["VMA15"]
+
     g["FailNewHigh"] = g["Close"] < g["HH15"]
 
     red_vol = (g["Volume"] * g["RedDay"].astype(int)).rolling(10).sum()
@@ -163,62 +160,44 @@ def add_features(g):
 def early_score_bias(g):
     g = g.copy()
 
-    # ACCUMULATION components
+    # accumulation components
     hl = (g["Low"] > g["Low"].shift(1)).rolling(10).mean()
-    vtrend = (g["VMA7"] / (g["VMA20"] + 1e-12)).clip(0, 2) / 2
+    vtrend = (g["VMA7"] / (g["VMA15"] + 1e-12)).clip(0, 2) / 2
     strong_close = g["ClosePos"].rolling(7).mean()
     comp_score = (1 - (g["Compression"].clip(0, 2) / 2)).clip(0, 1)
 
-    # near breakout (supporting early detection)
     near = (g["Close"] / (g["HH15"] + 1e-12)).clip(0, 1.5)
     near_score = ((near - 0.90) / 0.10).clip(0, 1)
 
-    score01 = (
-        0.28 * hl +
-        0.22 * vtrend +
-        0.18 * strong_close +
-        0.20 * comp_score +
-        0.12 * near_score
-    ).clip(0, 1)
+    score01 = (0.28 * hl + 0.22 * vtrend + 0.18 * strong_close + 0.20 * comp_score + 0.12 * near_score).clip(0, 1)
     g["EarlyScore"] = (score01 * 100).round(0)
 
-    # ACCUMULATION FLAG = 3/4 rules
+    # accumulation flag = 3/4
     acc1_higher_lows = (hl >= 0.6)
-    acc2_vol_trend   = (g["VMA7"] > g["VMA20"])
+    acc2_vol_trend   = (g["VMA7"] > g["VMA15"])
     acc3_strongclose = (g["ClosePos"].rolling(7).mean() > 0.60)
     acc4_compress    = (g["Compression"] < 1.0)
 
-    acc_count = (
-        acc1_higher_lows.astype(int) +
-        acc2_vol_trend.astype(int) +
-        acc3_strongclose.astype(int) +
-        acc4_compress.astype(int)
-    )
+    acc_count = acc1_higher_lows.astype(int) + acc2_vol_trend.astype(int) + acc3_strongclose.astype(int) + acc4_compress.astype(int)
     g["AccumulationCount"] = acc_count
     g["AccumulationFlag"] = acc_count >= 3
 
-    # DISTRIBUTION rules (any 2+)
+    # distribution rules (2+)
     dist1_highvol_weak = g["VolSpike"] & (g["Close"] <= g["Open"])
     dist2_reject = (g["UpperWickPct"].rolling(5).mean() > 0.45) & (g["ClosePos"].rolling(5).mean() < 0.45)
     dist3_fail_high = (g["FailNewHigh"].rolling(5).mean() > 0.70)
     dist4_red_vol_dom = (g["RedVolShare10"] > 0.55)
 
-    dist_count = (
-        dist1_highvol_weak.astype(int) +
-        dist2_reject.astype(int) +
-        dist3_fail_high.astype(int) +
-        dist4_red_vol_dom.astype(int)
-    )
+    dist_count = dist1_highvol_weak.astype(int) + dist2_reject.astype(int) + dist3_fail_high.astype(int) + dist4_red_vol_dom.astype(int)
     g["DistributionCount"] = dist_count
     g["DistributionFlag"] = dist_count >= 2
 
-    # Bias (stock-wise)
     up = g["AccumulationFlag"] & (g["EarlyScore"] >= 70) & (g["RSI14"] > 50)
     down = g["DistributionFlag"] | ((g["EarlyScore"] <= 35) & (g["RSI14"] < 45))
     g["Bias"] = np.where(up, "UP", np.where(down, "DOWN", "NEUTRAL"))
     g["Confidence"] = np.round((g["EarlyScore"] / 100).clip(0, 1), 2)
 
-    # Reasons
+    # reasons flags
     g["HigherLows"] = acc1_higher_lows
     g["VolTrendUp"] = acc2_vol_trend
     g["StrongClose"] = acc3_strongclose
@@ -229,20 +208,18 @@ def early_score_bias(g):
     return g
 
 
-# ---------- STOCK SIGNAL ----------
+# ---------- STOCK SIGNAL (EarlyScore >= 50, RSI >= 50) ----------
 def stock_signals(g):
     g = g.copy()
 
-    # Stock BUY: strong accumulation + not distribution
     buy = (
         (g["AccumulationFlag"]) &
-        (g["EarlyScore"] >= 75) &
+        (g["EarlyScore"] >= 50) &
         (g["MA7"] > g["MA10"]) &
-        (g["RSI14"] >= 52) &
+        (g["RSI14"] >= 50) &
         (g["DistributionFlag"] == False)
     )
 
-    # Stock SELL: distribution OR momentum break
     sell = (
         (g["DistributionFlag"]) |
         (g["Close"] < g["MA10"]) |
@@ -250,6 +227,12 @@ def stock_signals(g):
     )
 
     g["Stock Signal"] = np.where(buy, "BUY", np.where(sell, "SELL", "HOLD"))
+
+    g["BuyStrength"] = ""
+    g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 75), "BuyStrength"] = "STRONG BUY"
+    g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 60) & (g["EarlyScore"] < 75), "BuyStrength"] = "BUY"
+    g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 50) & (g["EarlyScore"] < 60), "BuyStrength"] = "EARLY BUY"
+
     return g
 
 
@@ -266,7 +249,6 @@ def build_reason(row):
     return ", ".join(parts) if parts else "mixed / no clear edge"
 
 
-# ---------- SECTOR SIGNAL ----------
 def sector_signal_from_ret(sector_ret10):
     if pd.isna(sector_ret10):
         return "HOLD"
@@ -351,7 +333,6 @@ def main():
     for sym, g in data.groupby("Symbol"):
         if len(g) < 25:
             continue
-
         g = stock_signals(early_score_bias(add_features(g)))
         last = g.iloc[-1]
 
@@ -359,6 +340,8 @@ def main():
             "Date": last["Date"].date() if pd.notna(last["Date"]) else None,
             "Symbol": sym,
             "Stock Signal": last["Stock Signal"],
+            "Sector Signal": None,  # filled later
+            "BuyStrength": last["BuyStrength"],
             "Bias": last["Bias"],
             "EarlyScore": int(last["EarlyScore"]) if not pd.isna(last["EarlyScore"]) else None,
             "Confidence": float(last["Confidence"]) if not pd.isna(last["Confidence"]) else None,
@@ -372,11 +355,8 @@ def main():
         })
 
     signals_df = pd.DataFrame(latest_rows)
-
-    # Attach Sector and Company
     signals_df = signals_df.merge(sector_df, on="Symbol", how="left")
 
-    # Sector momentum based on average RET10_% across symbols
     sector_mom = (
         signals_df.groupby("Sector", dropna=True)["RET10_%"]
         .mean()
@@ -384,43 +364,36 @@ def main():
         .reset_index()
     )
     signals_df = signals_df.merge(sector_mom, on="Sector", how="left")
-
-    # Sector Signal BUY/SELL/HOLD
     signals_df["Sector Signal"] = signals_df["Sector_RET10"].apply(sector_signal_from_ret)
 
-    # Re-order columns to your required layout
     final_cols = [
-        "Date", "Symbol", "Stock Signal", "Sector Signal",
-        "Bias", "EarlyScore", "Confidence",
-        "Close", "Volume",
-        "RET7_%", "RET10_%", "RET15_%", "RET20_%",
-        "Reason",
-        "Sector", "Company", "Sector_RET10"
+        "Date","Symbol","Stock Signal","Sector Signal",
+        "BuyStrength","Bias","EarlyScore","Confidence","Close","Volume",
+        "RET7_%","RET10_%","RET15_%","RET20_%","Reason",
+        "Sector","Company","Sector_RET10"
     ]
     final_cols = [c for c in final_cols if c in signals_df.columns]
     signals_df = signals_df[final_cols]
 
-    # Sort BUY first
-    order = {"BUY": 0, "HOLD": 1, "SELL": 2}
+    order = {"BUY":0,"HOLD":1,"SELL":2}
     signals_df["__r"] = signals_df["Stock Signal"].map(order).fillna(9)
-    signals_df = signals_df.sort_values(["__r", "EarlyScore", "Confidence"], ascending=[True, False, False]).drop(columns="__r")
+    signals_df = signals_df.sort_values(["__r","EarlyScore","Confidence"], ascending=[True, False, False]).drop(columns="__r")
 
-    # Excel (ONE SHEET)
     wb = Workbook()
     wb.active.title = "Signals"
     ws = wb["Signals"]
     write_table(ws, signals_df, "SignalsTbl")
 
     number_format(ws, {
-        "Close": "#,##0.00",
-        "Volume": "#,##0",
-        "Confidence": "0.00",
-        "EarlyScore": "0",
-        "RET7_%": "0.00",
-        "RET10_%": "0.00",
-        "RET15_%": "0.00",
-        "RET20_%": "0.00",
-        "Sector_RET10": "0.00",
+        "Close":"#,##0.00",
+        "Volume":"#,##0",
+        "Confidence":"0.00",
+        "EarlyScore":"0",
+        "RET7_%":"0.00",
+        "RET10_%":"0.00",
+        "RET15_%":"0.00",
+        "RET20_%":"0.00",
+        "Sector_RET10":"0.00",
     })
     color_scale(ws, "EarlyScore")
     color_scale(ws, "Confidence")
