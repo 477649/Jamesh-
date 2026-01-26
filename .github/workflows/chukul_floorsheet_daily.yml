@@ -57,17 +57,22 @@ jobs:
         run: |
           python scripts/generate_market_report.py
 
-      # 4️⃣ Commit and push all daily outputs
+      # 4️⃣ PriceAction early accumulation / distribution signals
+      - name: Generate PriceAction Signals
+        run: |
+          python priceaction_signals.py
+
+      # 5️⃣ Commit and push all daily outputs
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add floorsheet + sharesansar + reports + Floor Sheet CSV folder
-          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv "outputs/Floor Sheet/*.csv" || true
+          # Add floorsheet + sharesansar + reports + Floor Sheet CSV folder + PriceAction
+          git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv "outputs/Floor Sheet/*.csv" outputs/PriceAction/*.xlsx || true
 
           # Commit if there are changes
-          git commit -m "Daily floorsheet + market overview report (3:30 PM NPT)" || echo "No changes to commit"
+          git commit -m "Daily floorsheet + market overview + price action report (3:30 PM NPT)" || echo "No changes to commit"
 
           # ✅ Fix push rejection: sync with remote then push
           git pull --rebase origin main
