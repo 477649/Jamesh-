@@ -114,14 +114,18 @@ def true_range(h, l, c):
 def add_features(g):
     g = g.copy()
 
-    # windows you use
-    for n in [7, 10, 15, 20]:
+    # windows you use (added 30 only; everything else same)
+    for n in [7, 10, 15, 20, 30]:
         g[f"MA{n}"] = g["Close"].rolling(n).mean()
         g[f"VMA{n}"] = g["Volume"].rolling(n).mean()
 
     # breakout context (15D)
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
+
+    # ✅ ADDED: 30D context (new logic)
+    g["HH30"] = g["High"].rolling(30).max()
+    g["LL30"] = g["Low"].rolling(30).min()
 
     # candle / price-action
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
@@ -134,6 +138,9 @@ def add_features(g):
     g["RET10"] = g["Close"].pct_change(10) * 100
     g["RET15"] = g["Close"].pct_change(15) * 100
     g["RET20"] = g["Close"].pct_change(20) * 100
+
+    # ✅ ADDED: 30D return (new logic)
+    g["RET30"] = g["Close"].pct_change(30) * 100
 
     # volatility / compression: compare TR7 vs TR15
     g["TR"] = true_range(g["High"], g["Low"], g["Close"])
@@ -208,7 +215,7 @@ def early_score_bias(g):
     return g
 
 
-# ---------- STOCK SIGNAL (EarlyScore >= 50, RSI >= 50) ----------
+# ---------- STOCK SIGNAL ----------
 def stock_signals(g):
     g = g.copy()
 
@@ -232,6 +239,12 @@ def stock_signals(g):
     g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 75), "BuyStrength"] = "STRONG BUY"
     g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 60) & (g["EarlyScore"] < 75), "BuyStrength"] = "BUY"
     g.loc[(g["Stock Signal"] == "BUY") & (g["EarlyScore"] >= 50) & (g["EarlyScore"] < 60), "BuyStrength"] = "EARLY BUY"
+
+    # ✅ ADDED: SellStrength
+    g["SellStrength"] = ""
+    g.loc[(g["Stock Signal"] == "SELL") & (g["EarlyScore"] <= 25), "SellStrength"] = "STRONG SELL"
+    g.loc[(g["Stock Signal"] == "SELL") & (g["EarlyScore"] > 25) & (g["EarlyScore"] <= 40), "SellStrength"] = "SELL"
+    g.loc[(g["Stock Signal"] == "SELL") & (g["EarlyScore"] > 40), "SellStrength"] = "EARLY SELL"
 
     return g
 
@@ -322,6 +335,47 @@ def color_scale(ws, col_name):
     )
 
 
+# ---------- ADVANCED SHEET HELPERS (no effect on Signals logic) ----------
+def add_advanced_columns(df, last_features_by_symbol):
+    adv = df.copy()
+
+    # Bring last-day MA15/MA30, HH15, VMA15, UpperWickPct (from per-symbol last row features)
+    adv = adv.merge(last_features_by_symbol, on="Symbol", how="left")
+
+    # 1) Trend alignment: MA15 > MA30
+    adv["TrendAligned_15_30"] = (adv["MA15"] > adv["MA30"])
+
+    # 2) Breakout quality (15D)
+    adv["BreakoutQuality15"] = (
+        (adv["Close"] >= adv["HH15"]) &
+        (adv["Volume"] > adv["VMA15"]) &
+        (adv["UpperWickPct"] < 0.30)
+    )
+
+    # 3) Sector-relative strength
+    adv["SectorRelativeStrength10"] = adv["RET10_%"] - adv["Sector_RET10"]
+
+    # 4) Advanced confidence (still 0–1)
+    adv["Confidence_Advanced"] = np.round(
+        (0.85 * (adv["EarlyScore"] / 100.0)) + (0.15 * adv["TrendAligned_15_30"].astype(int)),
+        2
+    )
+
+    # 5) RankScore (for sorting inside Advanced sheet)
+    # Base: EarlyScore
+    # Bonus: TrendAligned + BreakoutQuality + Sector leader
+    adv["RankScore"] = (
+        adv["EarlyScore"].fillna(0).astype(float) +
+        5.0 * adv["TrendAligned_15_30"].astype(int) +
+        5.0 * adv["BreakoutQuality15"].astype(int) +
+        2.0 * (adv["SectorRelativeStrength10"] > 0).astype(int)
+    ).round(1)
+
+    # Clean up helper columns not required to view (you can keep if you want)
+    # Keep MA15/MA30/HH15/VMA15/UpperWickPct visible because useful in Advanced sheet
+    return adv
+
+
 # ---------- MAIN ----------
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -330,18 +384,23 @@ def main():
     sector_df = load_sector_master(SECTOR_FILE)
 
     latest_rows = []
+    last_feature_rows = []  # for Advanced sheet (per symbol last-day feature values)
+
     for sym, g in data.groupby("Symbol"):
         if len(g) < 25:
             continue
+
         g = stock_signals(early_score_bias(add_features(g)))
         last = g.iloc[-1]
 
+        # ---- Signals sheet row (UNCHANGED structure, only includes what you already approved) ----
         latest_rows.append({
             "Date": last["Date"].date() if pd.notna(last["Date"]) else None,
             "Symbol": sym,
             "Stock Signal": last["Stock Signal"],
             "Sector Signal": None,  # filled later
             "BuyStrength": last["BuyStrength"],
+            "SellStrength": last["SellStrength"],
             "Bias": last["Bias"],
             "EarlyScore": int(last["EarlyScore"]) if not pd.isna(last["EarlyScore"]) else None,
             "Confidence": float(last["Confidence"]) if not pd.isna(last["Confidence"]) else None,
@@ -351,7 +410,18 @@ def main():
             "RET10_%": float(last["RET10"]) if not pd.isna(last["RET10"]) else None,
             "RET15_%": float(last["RET15"]) if not pd.isna(last["RET15"]) else None,
             "RET20_%": float(last["RET20"]) if not pd.isna(last["RET20"]) else None,
+            "RET30_%": float(last["RET30"]) if not pd.isna(last["RET30"]) else None,
             "Reason": build_reason(last),
+        })
+
+        # ---- Advanced helper features (last row only) ----
+        last_feature_rows.append({
+            "Symbol": sym,
+            "MA15": float(last["MA15"]) if not pd.isna(last["MA15"]) else None,
+            "MA30": float(last["MA30"]) if not pd.isna(last["MA30"]) else None,
+            "HH15": float(last["HH15"]) if not pd.isna(last["HH15"]) else None,
+            "VMA15": float(last["VMA15"]) if not pd.isna(last["VMA15"]) else None,
+            "UpperWickPct": float(last["UpperWickPct"]) if not pd.isna(last["UpperWickPct"]) else None,
         })
 
     signals_df = pd.DataFrame(latest_rows)
@@ -366,25 +436,59 @@ def main():
     signals_df = signals_df.merge(sector_mom, on="Sector", how="left")
     signals_df["Sector Signal"] = signals_df["Sector_RET10"].apply(sector_signal_from_ret)
 
+    # ✅ REQUIRED ORDER for Signals: after Symbol => Sector, Company
     final_cols = [
-        "Date","Symbol","Stock Signal","Sector Signal",
-        "BuyStrength","Bias","EarlyScore","Confidence","Close","Volume",
-        "RET7_%","RET10_%","RET15_%","RET20_%","Reason",
-        "Sector","Company","Sector_RET10"
+        "Date",
+        "Symbol", "Sector", "Company",
+        "Stock Signal", "Sector Signal",
+        "BuyStrength", "SellStrength",
+        "Bias", "EarlyScore", "Confidence", "Close", "Volume",
+        "RET7_%", "RET10_%", "RET15_%", "RET20_%", "RET30_%",
+        "Reason",
+        "Sector_RET10"
     ]
     final_cols = [c for c in final_cols if c in signals_df.columns]
     signals_df = signals_df[final_cols]
 
+    # Sort Signals sheet same way as before
     order = {"BUY":0,"HOLD":1,"SELL":2}
     signals_df["__r"] = signals_df["Stock Signal"].map(order).fillna(9)
     signals_df = signals_df.sort_values(["__r","EarlyScore","Confidence"], ascending=[True, False, False]).drop(columns="__r")
 
-    wb = Workbook()
-    wb.active.title = "Signals"
-    ws = wb["Signals"]
-    write_table(ws, signals_df, "SignalsTbl")
+    # --------- Build Advanced sheet (does NOT alter Signals) ----------
+    last_features_by_symbol = pd.DataFrame(last_feature_rows)
 
-    number_format(ws, {
+    adv_df = add_advanced_columns(signals_df, last_features_by_symbol)
+
+    # Advanced ordering (nice view)
+    adv_cols = [
+        "Date",
+        "Symbol", "Sector", "Company",
+        "Stock Signal", "Sector Signal",
+        "BuyStrength", "SellStrength",
+        "Bias",
+        "EarlyScore", "Confidence", "Confidence_Advanced", "RankScore",
+        "TrendAligned_15_30", "BreakoutQuality15", "SectorRelativeStrength10",
+        "Close", "Volume",
+        "RET7_%", "RET10_%", "RET15_%", "RET20_%", "RET30_%",
+        "MA15", "MA30", "HH15", "VMA15", "UpperWickPct",
+        "Reason", "Sector_RET10"
+    ]
+    adv_cols = [c for c in adv_cols if c in adv_df.columns]
+    adv_df = adv_df[adv_cols]
+
+    # Sort Advanced by RankScore desc (best on top)
+    adv_df = adv_df.sort_values(["RankScore","EarlyScore","Confidence_Advanced"], ascending=[False, False, False])
+
+    # ---------- WRITE EXCEL ----------
+    wb = Workbook()
+
+    # Sheet 1: Signals (unchanged)
+    wb.active.title = "Signals"
+    ws1 = wb["Signals"]
+    write_table(ws1, signals_df, "SignalsTbl")
+
+    number_format(ws1, {
         "Close":"#,##0.00",
         "Volume":"#,##0",
         "Confidence":"0.00",
@@ -393,10 +497,38 @@ def main():
         "RET10_%":"0.00",
         "RET15_%":"0.00",
         "RET20_%":"0.00",
+        "RET30_%":"0.00",
         "Sector_RET10":"0.00",
     })
-    color_scale(ws, "EarlyScore")
-    color_scale(ws, "Confidence")
+    color_scale(ws1, "EarlyScore")
+    color_scale(ws1, "Confidence")
+
+    # Sheet 2: Signals_Advanced (new)
+    ws2 = wb.create_sheet("Signals_Advanced")
+    write_table(ws2, adv_df, "SignalsAdvTbl")
+
+    number_format(ws2, {
+        "Close":"#,##0.00",
+        "Volume":"#,##0",
+        "Confidence":"0.00",
+        "Confidence_Advanced":"0.00",
+        "EarlyScore":"0",
+        "RankScore":"0.0",
+        "RET7_%":"0.00",
+        "RET10_%":"0.00",
+        "RET15_%":"0.00",
+        "RET20_%":"0.00",
+        "RET30_%":"0.00",
+        "Sector_RET10":"0.00",
+        "SectorRelativeStrength10":"0.00",
+        "MA15":"#,##0.00",
+        "MA30":"#,##0.00",
+        "HH15":"#,##0.00",
+        "VMA15":"#,##0",
+        "UpperWickPct":"0.00",
+    })
+    color_scale(ws2, "RankScore")
+    color_scale(ws2, "Confidence_Advanced")
 
     wb.save(OUT_PATH)
     print(f"✅ Excel created: {OUT_PATH}")
