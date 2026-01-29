@@ -163,7 +163,11 @@
     {
       "date": "2026-01-28",
       "file": "data/floorsheet_2026-01-28.csv"
+    },
+    {
+      "date": "2026-01-29",
+      "file": "data/floorsheet_2026-01-29.csv"
     }
   ],
-  "latest": "2026-01-28"
+  "latest": "2026-01-29"
 }
