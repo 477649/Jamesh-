@@ -434,8 +434,6 @@ FINAL_COLS = [
     "Reason","Sector_RET10"
 ]
 
-BEST_COLS = ["Mode"] + FINAL_COLS  # for BUY_BEST / SELL_BEST
-
 
 # =========================
 # BUILD SHEET DF
@@ -592,50 +590,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
-# BEST FILTERS (NOT all BUY/SELL)
-# =========================
-def build_best_buy_sell(df, mode_label):
-    """
-    Returns (buy_best, sell_best) from one sheet (df) using only available columns.
-    """
-    d = df.copy()
-
-    # --- BEST BUY: strict quality ---
-    buy_best = d[
-        (d["Stock Signal"] == "BUY") &
-        (d["EarlyScore"] >= 70) &
-        (d["Confidence_Advanced"] >= 0.75) &
-        (d["RankScore"] >= 80) &
-        (d["TrendHealth"] == "GOOD") &
-        (d["FalseBreakoutFlag"] == False) &
-        (d["StretchFlag"] != "STRETCHED") &
-        (d["VolExpansionFlag"] == True)
-    ].copy()
-
-    # --- BEST SELL: risk/exit candidates (any trigger) ---
-    # Ensure NaNs don't break comparisons
-    slope = pd.to_numeric(d["Slope20"], errors="coerce")
-    r2 = pd.to_numeric(d["R2_20"], errors="coerce")
-    fb_score = pd.to_numeric(d["FalseBreakoutScore"], errors="coerce").fillna(0)
-
-    sell_best = d[
-        (d["Stock Signal"] == "SELL") |
-        (d["TrendHealth"] == "DOWN") |
-        ((d["FalseBreakoutFlag"] == True) & (fb_score >= 60)) |
-        ((slope < 0) & (r2 < 0.30)) |
-        ((d["StretchFlag"] == "STRETCHED") & (d["Confidence"] < 0.50))
-    ].copy()
-
-    buy_best.insert(0, "Mode", mode_label)
-    sell_best.insert(0, "Mode", mode_label)
-
-    buy_best = buy_best[[c for c in BEST_COLS if c in buy_best.columns]]
-    sell_best = sell_best[[c for c in BEST_COLS if c in sell_best.columns]]
-
-    return buy_best, sell_best
-
-
-# =========================
 # MAIN
 # =========================
 def main():
@@ -644,20 +598,9 @@ def main():
     data = load_latest_files(DATA_DIR, latest_n=LATEST_FILES_TO_LOAD)
     sector_df = load_sector_master(SECTOR_FILE)
 
-    # Main sheets
+    # Main sheets only
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
-
-    # Best filtered sheets (NOT all buy/sell)
-    buy7_best, sell7_best = build_best_buy_sell(df7, "7D")
-    buy15_best, sell15_best = build_best_buy_sell(df15, "15D")
-
-    buy_best_all = pd.concat([buy7_best, buy15_best], ignore_index=True)
-    sell_best_all = pd.concat([sell7_best, sell15_best], ignore_index=True)
-
-    # Sort best buy by RankScore desc; sell by RankScore asc (worst first is optional)
-    buy_best_all = buy_best_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
-    sell_best_all = sell_best_all.sort_values(["Mode", "RankScore"], ascending=[True, True])
 
     # ---------- WRITE EXCEL ----------
     wb = Workbook()
@@ -699,26 +642,8 @@ def main():
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
-    # Sheet 3: BUY_ALL (BEST BUY ONLY)
-    ws3 = wb.create_sheet("BUY_ALL")
-    write_table(ws3, buy_best_all, "BuyBestTbl")
-    number_format(ws3, fmt_map)
-    color_scale(ws3, "RankScore")
-    color_scale(ws3, "Confidence_Advanced")
-    color_scale(ws3, "EarlyScore")
-    color_scale(ws3, "FalseBreakoutScore")
-
-    # Sheet 4: SELL_ALL (BEST SELL ONLY)
-    ws4 = wb.create_sheet("SELL_ALL")
-    write_table(ws4, sell_best_all, "SellBestTbl")
-    number_format(ws4, fmt_map)
-    color_scale(ws4, "RankScore")
-    color_scale(ws4, "Confidence_Advanced")
-    color_scale(ws4, "EarlyScore")
-    color_scale(ws4, "FalseBreakoutScore")
-
     wb.save(OUT_PATH)
-    print(f"✅ Excel created with 4 sheets (BEST filters): {OUT_PATH}")
+    print(f"✅ Excel created with 2 sheets (Signals only): {OUT_PATH}")
 
 
 if __name__ == "__main__":
