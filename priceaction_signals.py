@@ -9,15 +9,17 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 
+
 # =========================
 # PATHS / SETTINGS
 # =========================
-DATA_DIR = "outputs/sharesansar"
-SECTOR_FILE = "outputs/Sector/sector_master.csv"
-OUT_DIR = "outputs/PriceAction"
+DATA_DIR = "outputs/sharesansar"                  # INPUT daily share price CSVs
+SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -> Sector/Company)
+OUT_DIR  = "outputs/PriceAction"
 OUT_PATH = os.path.join(OUT_DIR, "nepse_signals.xlsx")
 
-LATEST_FILES_TO_LOAD = 60  # enough for Z20, Slope20, RET30
+LATEST_FILES_TO_LOAD = 60  # enough for 30D returns & 20D stats in 15D sheet
+
 
 # =========================
 # LOAD DATA
@@ -27,7 +29,7 @@ def load_latest_files(folder, latest_n=60):
     if not files:
         raise FileNotFoundError(f"No SharePrice_*.csv files found in: {folder}")
 
-    files = files[-latest_n:]  # latest trading days by filename sort
+    files = files[-latest_n:]  # latest trading days (by filename sort)
 
     rows = []
     for f in files:
@@ -73,16 +75,14 @@ def load_sector_master(path):
     if "Symbol" not in df.columns:
         raise ValueError("sector_master.csv must contain column: Symbol")
 
-    # sector column
     sector_col = None
     for c in ["Sector", "Sectors", "sector", "sectors"]:
         if c in df.columns:
             sector_col = c
             break
     if sector_col is None:
-        raise ValueError("sector_master.csv must contain a Sector column")
+        raise ValueError("sector_master.csv must contain a Sector column (Sector/Sectors)")
 
-    # company column
     company_col = None
     for c in ["Company", "Company Name", "company"]:
         if c in df.columns:
@@ -95,12 +95,12 @@ def load_sector_master(path):
 
 
 # =========================
-# INDICATORS / STATS
+# MATH / INDICATORS
 # =========================
 def rsi(close, n=14):
     d = close.diff()
     gain = d.clip(lower=0)
-    loss = (-d).clip(lower=0)
+    loss = (-d.clip(upper=0)).clip(lower=0)
     avg_gain = gain.rolling(n).mean()
     avg_loss = loss.rolling(n).mean()
     rs = avg_gain / (avg_loss + 1e-12)
@@ -112,35 +112,34 @@ def true_range(h, l, c):
     return pd.concat([(h - l), (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
 
 
-def zscore(s, n=20):
+def zscore(s, n):
     return (s - s.rolling(n).mean()) / (s.rolling(n).std() + 1e-12)
 
 
-def slope_r2_last_n(close, n=20):
+def slope_r2_last_n(close, n):
     """slope (price/day) and R2 over last n points."""
     y = close.tail(n).values
     if len(y) < n or np.isnan(y).any():
         return np.nan, np.nan
     x = np.arange(n)
-    m, b = np.polyfit(x, y, 1)
+    m, _ = np.polyfit(x, y, 1)
     r = np.corrcoef(x, y)[0, 1]
     return float(m), float(r * r)
 
 
 def add_features(g):
-    """Compute common features once; both sheets share these columns."""
     g = g.copy()
 
-    # Moving averages (price + volume)
+    # MAs + VMAs
     for n in [7, 10, 15, 30]:
         g[f"MA{n}"] = g["Close"].rolling(n).mean()
         g[f"VMA{n}"] = g["Volume"].rolling(n).mean()
 
-    # HH / LL
-    g["HH7"] = g["High"].rolling(7).max()
-    g["LL7"] = g["Low"].rolling(7).min()
+    # HH/LL
+    g["HH7"]  = g["High"].rolling(7).max()
+    g["LL7"]  = g["Low"].rolling(7).min()   # Lowest Low 7
     g["HH15"] = g["High"].rolling(15).max()
-    g["LL15"] = g["Low"].rolling(15).min()
+    g["LL15"] = g["Low"].rolling(15).min()  # Lowest Low 15
 
     # Returns
     for n in [7, 10, 15, 20, 30]:
@@ -153,22 +152,18 @@ def add_features(g):
     # RSI
     g["RSI14"] = rsi(g["Close"], 14)
 
-    # ATR
+    # ATR7 / ATR15
     tr = true_range(g["High"], g["Low"], g["Close"])
     g["ATR7"] = tr.rolling(7).mean()
     g["ATR15"] = tr.rolling(15).mean()
     g["ATR7_%"] = (g["ATR7"] / (g["Close"] + 1e-12)) * 100
     g["ATR_%"] = (g["ATR15"] / (g["Close"] + 1e-12)) * 100
 
-    # Z-scores
-    g["Close_Z20"] = zscore(g["Close"], 20)
-    g["Volume_Z20"] = zscore(g["Volume"], 20)
-
     return g
 
 
 # =========================
-# ADVANCED INSIGHTS (NEW)
+# ADVANCED INSIGHTS (3 flags)
 # =========================
 def trend_health(slope20, r2_20):
     if pd.isna(slope20) or pd.isna(r2_20):
@@ -211,15 +206,13 @@ def false_breakout_metrics(close, hh, volume, vma, upperwickpct):
     breakout_attempt = close >= hh
     reject = upperwickpct > 0.45
     weak_vol = volume < vma
-
     flag = bool(breakout_attempt and (reject or weak_vol))
 
-    # Score components
-    wick_comp = float(np.clip((upperwickpct - 0.35) / 0.30, 0, 1))  # penalize after 0.35
+    wick_comp = float(np.clip((upperwickpct - 0.35) / 0.30, 0, 1))
     vol_ratio = float(volume / (vma + 1e-12))
-    vol_comp = float(np.clip((1.0 - vol_ratio) / 0.50, 0, 1))       # full penalty at vol_ratio<=0.5
+    vol_comp = float(np.clip((1.0 - vol_ratio) / 0.50, 0, 1))
     dist = float((close / (hh + 1e-12)) - 1.0)
-    dist_comp = float(np.clip(dist / 0.03, 0, 1))                   # 3% above HH = max
+    dist_comp = float(np.clip(dist / 0.03, 0, 1))
 
     score = int(round((0.45 * wick_comp + 0.35 * vol_comp + 0.20 * dist_comp) * 100, 0))
     return (flag, score)
@@ -281,11 +274,11 @@ def rank_score(early_score, trend_aligned, breakout_quality, sector_rel_pos):
 
 def early_score_7d(g):
     """
-    7D style score (fast):
-    - MA7>MA10
-    - close near HH7
-    - volume > VMA7
-    - low upper wick
+    7D score:
+      - MA7>MA10
+      - close near HH7
+      - volume > VMA7
+      - low upper wick
     """
     g = g.copy()
     cond_ma = (g["MA7"] > g["MA10"]).astype(int)
@@ -300,11 +293,11 @@ def early_score_7d(g):
 
 def early_score_15d(g):
     """
-    15D style score (steadier):
-    - MA15>MA30
-    - close near HH15
-    - volume > VMA15
-    - low upper wick
+    15D score:
+      - MA15>MA30
+      - close near HH15
+      - volume > VMA15
+      - low upper wick
     """
     g = g.copy()
     cond_ma = (g["MA15"] > g["MA30"]).astype(int)
@@ -449,8 +442,18 @@ def color_scale(ws, col_name):
     )
 
 
+def number_format(ws, mapping):
+    """Excel display formatting only (does not change calculations)."""
+    header = [c.value for c in ws[1]]
+    for col_name, fmt in mapping.items():
+        if col_name in header:
+            idx = header.index(col_name) + 1
+            for r in range(2, ws.max_row + 1):
+                ws.cell(row=r, column=idx).number_format = fmt
+
+
 # =========================
-# FINAL OUTPUT COLUMNS (same for both sheets)
+# FINAL OUTPUT COLUMNS
 # =========================
 FINAL_COLS = [
     "Date","Symbol","Sector","Company",
@@ -475,6 +478,10 @@ FINAL_COLS = [
 # BUILD SHEET DF
 # =========================
 def build_sheet_df(data, sector_df, mode="7D"):
+    """
+    mode="7D": uses 7-day stats for Close_Z20/Volume_Z20/Slope20/R2_20/StretchFlag
+    mode="15D": uses 20-day stats for Close_Z20/Volume_Z20/Slope20/R2_20/StretchFlag
+    """
     rows = []
 
     for sym, g in data.groupby("Symbol"):
@@ -483,17 +490,28 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         g = add_features(g)
 
-        # slope/r2 at last bar
-        sl, r2 = slope_r2_last_n(g["Close"], 20)
+        # --- Stat windows (per your requirement) ---
+        if mode == "7D":
+            z_win = 7
+            slope_win = 7
+        else:
+            z_win = 20
+            slope_win = 20
+
+        # Keep column names SAME (Close_Z20 etc.), only window changes by sheet
+        g["Close_Z20"] = zscore(g["Close"], z_win)
+        g["Volume_Z20"] = zscore(g["Volume"], z_win)
+
+        sl, r2 = slope_r2_last_n(g["Close"], slope_win)
         g["Slope20"] = np.nan
         g["R2_20"] = np.nan
         g.loc[g.index[-1], "Slope20"] = sl
         g.loc[g.index[-1], "R2_20"] = r2
 
-        # Vol expansion uses series
+        # Vol expansion uses both ATR7_% and ATR_% series (same on both sheets)
         ve_flag = vol_expansion_flag(g["ATR7_%"], g["ATR_%"])
 
-        # Apply signals per mode
+        # Apply signal logic per sheet
         if mode == "7D":
             g = signals_7d(g)
         else:
@@ -501,7 +519,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         last = g.iloc[-1]
 
-        # Per-mode breakout quality and reason
+        # Per-mode breakout quality + reason + false breakout reference
         if mode == "7D":
             breakout_quality = (
                 (pd.notna(last["HH7"]) and last["Close"] >= last["HH7"]) and
@@ -526,8 +544,8 @@ def build_sheet_df(data, sector_df, mode="7D"):
             )
 
         trend_aligned = bool(pd.notna(last["MA15"]) and pd.notna(last["MA30"]) and (last["MA15"] > last["MA30"]))
-        conf_adv = confidence_advanced(int(last["EarlyScore"]) if pd.notna(last["EarlyScore"]) else None, trend_aligned)
-
+        es = int(last["EarlyScore"]) if pd.notna(last["EarlyScore"]) else None
+        conf_adv = confidence_advanced(es, trend_aligned)
         th = trend_health(last.get("Slope20"), last.get("R2_20"))
         stretch = stretch_flag(last.get("Close_Z20"))
 
@@ -541,7 +559,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "SellStrength": last["SellStrength"],
             "Bias": last["Bias"],
 
-            "EarlyScore": int(last["EarlyScore"]) if pd.notna(last["EarlyScore"]) else None,
+            "EarlyScore": es,
             "Confidence": float(last["Confidence"]) if pd.notna(last["Confidence"]) else None,
             "Confidence_Advanced": conf_adv,
             "RankScore": None,  # fill after sector relative strength calc
@@ -596,7 +614,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
     df = pd.DataFrame(rows)
     df = df.merge(sector_df, on="Symbol", how="left")
 
-    # sector momentum: mean RET10_% by sector
+    # Sector momentum: mean RET10_% by sector
     sector_mom = (
         df.groupby("Sector", dropna=True)["RET10_%"]
         .mean()
@@ -606,11 +624,10 @@ def build_sheet_df(data, sector_df, mode="7D"):
     df = df.merge(sector_mom, on="Sector", how="left")
     df["Sector Signal"] = df["Sector_RET10"].apply(sector_signal_from_ret)
 
-    # sector relative strength
-    df["SectorRelativeStrength10"] = df["RET10_%"] - df["Sector_RET10"]
-    sector_rel_pos = (df["SectorRelativeStrength10"] > 0).fillna(False)
+    # Sector relative strength (internal for RankScore only)
+    df["__SectorRelPos"] = ((df["RET10_%"] - df["Sector_RET10"]) > 0).fillna(False)
 
-    # RankScore (mode-specific breakout quality)
+    # RankScore (mode-specific breakout)
     if mode == "7D":
         bq = ((df["Close"] >= df["HH7"]) & (df["Volume"] > df["VMA7"]) & (df["UpperWickPct"] < 0.30)).fillna(False)
     else:
@@ -619,8 +636,9 @@ def build_sheet_df(data, sector_df, mode="7D"):
     trend_aligned = (df["MA15"] > df["MA30"]).fillna(False)
     df["RankScore"] = [
         rank_score(es, ta, bqi, sr)
-        for es, ta, bqi, sr in zip(df["EarlyScore"], trend_aligned, bq, sector_rel_pos)
+        for es, ta, bqi, sr in zip(df["EarlyScore"], trend_aligned, bq, df["__SectorRelPos"])
     ]
+    df = df.drop(columns=["__SectorRelPos"], errors="ignore")
 
     # Ensure output order
     df = df[[c for c in FINAL_COLS if c in df.columns]]
@@ -648,16 +666,58 @@ def main():
     wb.active.title = "Signals_7D"
     ws1 = wb["Signals_7D"]
     write_table(ws1, df7, "Signals7DTbl")
+
+    number_format(ws1, {
+        # 2 decimals for %/decimal indicators
+        "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
+        "Confidence":"0.00","Confidence_Advanced":"0.00",
+        "UpperWickPct":"0.00",
+        "ATR7":"0.00","ATR7_%":"0.00","ATR15":"0.00","ATR_%":"0.00",
+        "Close_Z20":"0.00","Volume_Z20":"0.00",
+        "Slope20":"0.00","R2_20":"0.00",
+        "RankScore":"0.00",
+        "Sector_RET10":"0.00",
+        "FalseBreakoutScore":"0.00",
+        "Close":"#,##0.00",
+        "Volume":"#,##0",
+        "MA7":"#,##0.00","MA10":"#,##0.00","MA15":"#,##0.00","MA30":"#,##0.00",
+        "HH7":"#,##0.00","HH15":"#,##0.00","LL7":"#,##0.00","LL15":"#,##0.00",
+        "VMA7":"#,##0","VMA15":"#,##0",
+        "EarlyScore":"0",
+    })
+
     color_scale(ws1, "RankScore")
     color_scale(ws1, "Confidence_Advanced")
     color_scale(ws1, "EarlyScore")
+    color_scale(ws1, "FalseBreakoutScore")
 
     # Sheet 2: 15D
     ws2 = wb.create_sheet("Signals_15D")
     write_table(ws2, df15, "Signals15DTbl")
+
+    number_format(ws2, {
+        # 2 decimals for %/decimal indicators
+        "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
+        "Confidence":"0.00","Confidence_Advanced":"0.00",
+        "UpperWickPct":"0.00",
+        "ATR7":"0.00","ATR7_%":"0.00","ATR15":"0.00","ATR_%":"0.00",
+        "Close_Z20":"0.00","Volume_Z20":"0.00",
+        "Slope20":"0.00","R2_20":"0.00",
+        "RankScore":"0.00",
+        "Sector_RET10":"0.00",
+        "FalseBreakoutScore":"0.00",
+        "Close":"#,##0.00",
+        "Volume":"#,##0",
+        "MA7":"#,##0.00","MA10":"#,##0.00","MA15":"#,##0.00","MA30":"#,##0.00",
+        "HH7":"#,##0.00","HH15":"#,##0.00","LL7":"#,##0.00","LL15":"#,##0.00",
+        "VMA7":"#,##0","VMA15":"#,##0",
+        "EarlyScore":"0",
+    })
+
     color_scale(ws2, "RankScore")
     color_scale(ws2, "Confidence_Advanced")
     color_scale(ws2, "EarlyScore")
+    color_scale(ws2, "FalseBreakoutScore")
 
     wb.save(OUT_PATH)
     print(f"✅ Excel created with 2 sheets: {OUT_PATH}")
