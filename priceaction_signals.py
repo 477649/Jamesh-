@@ -17,7 +17,6 @@ DATA_DIR = "outputs/sharesansar"                  # INPUT daily share price CSVs
 SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -> Sector/Company)
 OUT_DIR  = "outputs/PriceAction"
 OUT_PATH = os.path.join(OUT_DIR, "nepse_signals.xlsx")
-
 LATEST_FILES_TO_LOAD = 60
 
 
@@ -39,7 +38,6 @@ def load_latest_files(folder, latest_n=60):
         df = pd.read_csv(f)
         df.columns = [c.strip() for c in df.columns]
 
-        # Map common columns
         if "Close" not in df.columns and "LTP" in df.columns:
             df["Close"] = df["LTP"]
         if "Volume" not in df.columns:
@@ -55,7 +53,6 @@ def load_latest_files(folder, latest_n=60):
         if missing:
             raise ValueError(f"Missing columns {missing} in file: {f}")
 
-        # Numeric cleanup
         for c in ["Open", "High", "Low", "Close", "Volume"]:
             df[c] = df[c].astype(str).str.replace(",", "", regex=False).astype(float)
 
@@ -116,7 +113,6 @@ def zscore(s, n):
 
 
 def slope_r2_last_n(close, n):
-    """slope (price/day) and R2 over last n points."""
     y = close.tail(n).values
     if len(y) < n or np.isnan(y).any():
         return np.nan, np.nan
@@ -129,29 +125,23 @@ def slope_r2_last_n(close, n):
 def add_features(g):
     g = g.copy()
 
-    # MAs + VMAs
     for n in [7, 10, 15, 30]:
         g[f"MA{n}"] = g["Close"].rolling(n).mean()
         g[f"VMA{n}"] = g["Volume"].rolling(n).mean()
 
-    # HH/LL
     g["HH7"]  = g["High"].rolling(7).max()
-    g["LL7"]  = g["Low"].rolling(7).min()   # Lowest Low 7
+    g["LL7"]  = g["Low"].rolling(7).min()
     g["HH15"] = g["High"].rolling(15).max()
-    g["LL15"] = g["Low"].rolling(15).min()  # Lowest Low 15
+    g["LL15"] = g["Low"].rolling(15).min()
 
-    # Returns
     for n in [7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
-    # Candle rejection
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
     g["UpperWickPct"] = ((g["High"] - g[["Open", "Close"]].max(axis=1)) / rng).clip(0, 1)
 
-    # RSI
     g["RSI14"] = rsi(g["Close"], 14)
 
-    # ATR7 / ATR15
     tr = true_range(g["High"], g["Low"], g["Close"])
     g["ATR7"] = tr.rolling(7).mean()
     g["ATR15"] = tr.rolling(15).mean()
@@ -162,16 +152,16 @@ def add_features(g):
 
 
 # =========================
-# ADVANCED INSIGHTS (3 flags)
+# ADVANCED INSIGHTS
 # =========================
-def trend_health(slope20, r2_20):
-    if pd.isna(slope20) or pd.isna(r2_20):
+def trend_health(slope, r2):
+    if pd.isna(slope) or pd.isna(r2):
         return ""
-    if slope20 <= 0:
+    if slope <= 0:
         return "DOWN"
-    if r2_20 >= 0.50:
+    if r2 >= 0.50:
         return "GOOD"
-    if r2_20 >= 0.30:
+    if r2 >= 0.30:
         return "WEAK"
     return "NOISY"
 
@@ -285,8 +275,10 @@ def early_score_15d(g):
 def signals_7d(g):
     g = early_score_7d(g).copy()
     g["Confidence"] = (g["EarlyScore"] / 100.0).round(2)
+
     buy = (g["EarlyScore"] >= 55) & (g["MA7"] > g["MA10"]) & (g["RSI14"] >= 50)
     sell = (g["MA7"] < g["MA10"]) & (g["RSI14"] < 45)
+
     g["Stock Signal"] = np.where(buy, "BUY", np.where(sell, "SELL", "HOLD"))
 
     g["BuyStrength"] = ""
@@ -307,8 +299,10 @@ def signals_7d(g):
 def signals_15d(g):
     g = early_score_15d(g).copy()
     g["Confidence"] = (g["EarlyScore"] / 100.0).round(2)
+
     buy = (g["EarlyScore"] >= 55) & (g["MA15"] > g["MA30"]) & (g["RSI14"] >= 50)
     sell = (g["MA15"] < g["MA30"]) & (g["RSI14"] < 45)
+
     g["Stock Signal"] = np.where(buy, "BUY", np.where(sell, "SELL", "HOLD"))
 
     g["BuyStrength"] = ""
@@ -411,7 +405,6 @@ def color_scale(ws, col_name):
 
 
 def number_format(ws, mapping):
-    """Excel display formatting only."""
     header = [c.value for c in ws[1]]
     for col_name, fmt in mapping.items():
         if col_name in header:
@@ -441,7 +434,7 @@ FINAL_COLS = [
     "Reason","Sector_RET10"
 ]
 
-BUYSELL_COLS = ["Mode"] + FINAL_COLS  # for BUY_ALL / SELL_ALL sheets
+BEST_COLS = ["Mode"] + FINAL_COLS  # for BUY_BEST / SELL_BEST
 
 
 # =========================
@@ -460,7 +453,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         g = add_features(g)
 
-        # --- Stat windows ---
+        # window rule
         if mode == "7D":
             z_win = 7
             slope_win = 7
@@ -468,7 +461,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
             z_win = 20
             slope_win = 20
 
-        # Keep column names SAME, only window changes by sheet
         g["Close_Z20"] = zscore(g["Close"], z_win)
         g["Volume_Z20"] = zscore(g["Volume"], z_win)
 
@@ -478,10 +470,8 @@ def build_sheet_df(data, sector_df, mode="7D"):
         g.loc[g.index[-1], "Slope20"] = sl
         g.loc[g.index[-1], "R2_20"] = r2
 
-        # Vol expansion (same on both sheets)
         ve_flag = vol_expansion_flag(g["ATR7_%"], g["ATR_%"])
 
-        # Apply signal logic
         if mode == "7D":
             g = signals_7d(g)
         else:
@@ -489,7 +479,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         last = g.iloc[-1]
 
-        # Per-mode breakout quality + reason + false breakout reference
         if mode == "7D":
             reason = build_reason_7d(last)
             reg = vol_regime_from_atr_pct(last["ATR7_%"])
@@ -574,7 +563,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
     df = pd.DataFrame(rows)
     df = df.merge(sector_df, on="Symbol", how="left")
 
-    # Sector momentum: mean RET10_% by sector
     sector_mom = (
         df.groupby("Sector", dropna=True)["RET10_%"]
         .mean()
@@ -584,10 +572,8 @@ def build_sheet_df(data, sector_df, mode="7D"):
     df = df.merge(sector_mom, on="Sector", how="left")
     df["Sector Signal"] = df["Sector_RET10"].apply(sector_signal_from_ret)
 
-    # Sector relative strength for RankScore
     df["__SectorRelPos"] = ((df["RET10_%"] - df["Sector_RET10"]) > 0).fillna(False)
 
-    # Breakout quality (mode specific)
     if mode == "7D":
         bq = ((df["Close"] >= df["HH7"]) & (df["Volume"] > df["VMA7"]) & (df["UpperWickPct"] < 0.30)).fillna(False)
     else:
@@ -606,6 +592,50 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
+# BEST FILTERS (NOT all BUY/SELL)
+# =========================
+def build_best_buy_sell(df, mode_label):
+    """
+    Returns (buy_best, sell_best) from one sheet (df) using only available columns.
+    """
+    d = df.copy()
+
+    # --- BEST BUY: strict quality ---
+    buy_best = d[
+        (d["Stock Signal"] == "BUY") &
+        (d["EarlyScore"] >= 70) &
+        (d["Confidence_Advanced"] >= 0.75) &
+        (d["RankScore"] >= 80) &
+        (d["TrendHealth"] == "GOOD") &
+        (d["FalseBreakoutFlag"] == False) &
+        (d["StretchFlag"] != "STRETCHED") &
+        (d["VolExpansionFlag"] == True)
+    ].copy()
+
+    # --- BEST SELL: risk/exit candidates (any trigger) ---
+    # Ensure NaNs don't break comparisons
+    slope = pd.to_numeric(d["Slope20"], errors="coerce")
+    r2 = pd.to_numeric(d["R2_20"], errors="coerce")
+    fb_score = pd.to_numeric(d["FalseBreakoutScore"], errors="coerce").fillna(0)
+
+    sell_best = d[
+        (d["Stock Signal"] == "SELL") |
+        (d["TrendHealth"] == "DOWN") |
+        ((d["FalseBreakoutFlag"] == True) & (fb_score >= 60)) |
+        ((slope < 0) & (r2 < 0.30)) |
+        ((d["StretchFlag"] == "STRETCHED") & (d["Confidence"] < 0.50))
+    ].copy()
+
+    buy_best.insert(0, "Mode", mode_label)
+    sell_best.insert(0, "Mode", mode_label)
+
+    buy_best = buy_best[[c for c in BEST_COLS if c in buy_best.columns]]
+    sell_best = sell_best[[c for c in BEST_COLS if c in sell_best.columns]]
+
+    return buy_best, sell_best
+
+
+# =========================
 # MAIN
 # =========================
 def main():
@@ -618,32 +648,20 @@ def main():
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
 
-    # BUY/SELL sheets combining BOTH modes
-    buy7 = df7[df7["Stock Signal"] == "BUY"].copy()
-    sell7 = df7[df7["Stock Signal"] == "SELL"].copy()
-    buy15 = df15[df15["Stock Signal"] == "BUY"].copy()
-    sell15 = df15[df15["Stock Signal"] == "SELL"].copy()
+    # Best filtered sheets (NOT all buy/sell)
+    buy7_best, sell7_best = build_best_buy_sell(df7, "7D")
+    buy15_best, sell15_best = build_best_buy_sell(df15, "15D")
 
-    buy7.insert(0, "Mode", "7D")
-    sell7.insert(0, "Mode", "7D")
-    buy15.insert(0, "Mode", "15D")
-    sell15.insert(0, "Mode", "15D")
+    buy_best_all = pd.concat([buy7_best, buy15_best], ignore_index=True)
+    sell_best_all = pd.concat([sell7_best, sell15_best], ignore_index=True)
 
-    buy_all = pd.concat([buy7, buy15], ignore_index=True)
-    sell_all = pd.concat([sell7, sell15], ignore_index=True)
-
-    # Ensure full column order for these sheets
-    buy_all = buy_all[[c for c in BUYSELL_COLS if c in buy_all.columns]]
-    sell_all = sell_all[[c for c in BUYSELL_COLS if c in sell_all.columns]]
-
-    # Optional sorting
-    buy_all = buy_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
-    sell_all = sell_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
+    # Sort best buy by RankScore desc; sell by RankScore asc (worst first is optional)
+    buy_best_all = buy_best_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
+    sell_best_all = sell_best_all.sort_values(["Mode", "RankScore"], ascending=[True, True])
 
     # ---------- WRITE EXCEL ----------
     wb = Workbook()
 
-    # helper formatting mapping (2 decimals + nice formats)
     fmt_map = {
         "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
         "Confidence":"0.00","Confidence_Advanced":"0.00",
@@ -681,18 +699,18 @@ def main():
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
-    # Sheet 3: BUY_ALL
+    # Sheet 3: BUY_ALL (BEST BUY ONLY)
     ws3 = wb.create_sheet("BUY_ALL")
-    write_table(ws3, buy_all, "BuyAllTbl")
+    write_table(ws3, buy_best_all, "BuyBestTbl")
     number_format(ws3, fmt_map)
     color_scale(ws3, "RankScore")
     color_scale(ws3, "Confidence_Advanced")
     color_scale(ws3, "EarlyScore")
     color_scale(ws3, "FalseBreakoutScore")
 
-    # Sheet 4: SELL_ALL
+    # Sheet 4: SELL_ALL (BEST SELL ONLY)
     ws4 = wb.create_sheet("SELL_ALL")
-    write_table(ws4, sell_all, "SellAllTbl")
+    write_table(ws4, sell_best_all, "SellBestTbl")
     number_format(ws4, fmt_map)
     color_scale(ws4, "RankScore")
     color_scale(ws4, "Confidence_Advanced")
@@ -700,7 +718,7 @@ def main():
     color_scale(ws4, "FalseBreakoutScore")
 
     wb.save(OUT_PATH)
-    print(f"✅ Excel created with 4 sheets: {OUT_PATH}")
+    print(f"✅ Excel created with 4 sheets (BEST filters): {OUT_PATH}")
 
 
 if __name__ == "__main__":
