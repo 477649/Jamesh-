@@ -18,7 +18,7 @@ SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -
 OUT_DIR  = "outputs/PriceAction"
 OUT_PATH = os.path.join(OUT_DIR, "nepse_signals.xlsx")
 
-LATEST_FILES_TO_LOAD = 60  # enough for 30D returns & 20D stats in 15D sheet
+LATEST_FILES_TO_LOAD = 60
 
 
 # =========================
@@ -61,8 +61,7 @@ def load_latest_files(folder, latest_n=60):
 
         rows.append(df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
 
-    data = pd.concat(rows, ignore_index=True).sort_values(["Symbol", "Date"]).reset_index(drop=True)
-    return data
+    return pd.concat(rows, ignore_index=True).sort_values(["Symbol", "Date"]).reset_index(drop=True)
 
 
 def load_sector_master(path):
@@ -178,28 +177,17 @@ def trend_health(slope20, r2_20):
 
 
 def vol_expansion_flag(atr7_pct_series, atr15_pct_series):
-    """
-    True when:
-      ATR7_% > ATR15_% on the last day
-      and ATR7_% has been rising 3 days in a row
-    """
     if len(atr7_pct_series) < 4 or len(atr15_pct_series) < 1:
         return False
-
     a7 = atr7_pct_series.iloc[-1]
     a15 = atr15_pct_series.iloc[-1]
     if pd.isna(a7) or pd.isna(a15):
         return False
-
     rising3 = (atr7_pct_series.diff().tail(3) > 0).all()
     return bool((a7 > a15) and rising3)
 
 
 def false_breakout_metrics(close, hh, volume, vma, upperwickpct):
-    """
-    Returns: (flag, score 0-100)
-    Flag = breakout attempt but shows trap signs (rejection or weak vol)
-    """
     if pd.isna(close) or pd.isna(hh) or pd.isna(volume) or pd.isna(vma) or pd.isna(upperwickpct):
         return (False, None)
 
@@ -273,38 +261,22 @@ def rank_score(early_score, trend_aligned, breakout_quality, sector_rel_pos):
 
 
 def early_score_7d(g):
-    """
-    7D score:
-      - MA7>MA10
-      - close near HH7
-      - volume > VMA7
-      - low upper wick
-    """
     g = g.copy()
     cond_ma = (g["MA7"] > g["MA10"]).astype(int)
     near_hh7 = (g["Close"] >= 0.95 * g["HH7"]).astype(int)
     vol_ok = (g["Volume"] > g["VMA7"]).astype(int)
     wick_ok = (g["UpperWickPct"] < 0.35).astype(int)
-
     score = (0.30 * cond_ma + 0.30 * near_hh7 + 0.25 * vol_ok + 0.15 * wick_ok) * 100
     g["EarlyScore"] = score.round(0).clip(0, 100)
     return g
 
 
 def early_score_15d(g):
-    """
-    15D score:
-      - MA15>MA30
-      - close near HH15
-      - volume > VMA15
-      - low upper wick
-    """
     g = g.copy()
     cond_ma = (g["MA15"] > g["MA30"]).astype(int)
     near_hh15 = (g["Close"] >= 0.95 * g["HH15"]).astype(int)
     vol_ok = (g["Volume"] > g["VMA15"]).astype(int)
     wick_ok = (g["UpperWickPct"] < 0.35).astype(int)
-
     score = (0.35 * cond_ma + 0.30 * near_hh15 + 0.25 * vol_ok + 0.10 * wick_ok) * 100
     g["EarlyScore"] = score.round(0).clip(0, 100)
     return g
@@ -313,10 +285,8 @@ def early_score_15d(g):
 def signals_7d(g):
     g = early_score_7d(g).copy()
     g["Confidence"] = (g["EarlyScore"] / 100.0).round(2)
-
     buy = (g["EarlyScore"] >= 55) & (g["MA7"] > g["MA10"]) & (g["RSI14"] >= 50)
     sell = (g["MA7"] < g["MA10"]) & (g["RSI14"] < 45)
-
     g["Stock Signal"] = np.where(buy, "BUY", np.where(sell, "SELL", "HOLD"))
 
     g["BuyStrength"] = ""
@@ -337,10 +307,8 @@ def signals_7d(g):
 def signals_15d(g):
     g = early_score_15d(g).copy()
     g["Confidence"] = (g["EarlyScore"] / 100.0).round(2)
-
     buy = (g["EarlyScore"] >= 55) & (g["MA15"] > g["MA30"]) & (g["RSI14"] >= 50)
     sell = (g["MA15"] < g["MA30"]) & (g["RSI14"] < 45)
-
     g["Stock Signal"] = np.where(buy, "BUY", np.where(sell, "SELL", "HOLD"))
 
     g["BuyStrength"] = ""
@@ -443,7 +411,7 @@ def color_scale(ws, col_name):
 
 
 def number_format(ws, mapping):
-    """Excel display formatting only (does not change calculations)."""
+    """Excel display formatting only."""
     header = [c.value for c in ws[1]]
     for col_name, fmt in mapping.items():
         if col_name in header:
@@ -453,7 +421,7 @@ def number_format(ws, mapping):
 
 
 # =========================
-# FINAL OUTPUT COLUMNS
+# OUTPUT COLUMNS
 # =========================
 FINAL_COLS = [
     "Date","Symbol","Sector","Company",
@@ -473,6 +441,8 @@ FINAL_COLS = [
     "Reason","Sector_RET10"
 ]
 
+BUYSELL_COLS = ["Mode"] + FINAL_COLS  # for BUY_ALL / SELL_ALL sheets
+
 
 # =========================
 # BUILD SHEET DF
@@ -490,7 +460,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         g = add_features(g)
 
-        # --- Stat windows (per your requirement) ---
+        # --- Stat windows ---
         if mode == "7D":
             z_win = 7
             slope_win = 7
@@ -498,7 +468,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
             z_win = 20
             slope_win = 20
 
-        # Keep column names SAME (Close_Z20 etc.), only window changes by sheet
+        # Keep column names SAME, only window changes by sheet
         g["Close_Z20"] = zscore(g["Close"], z_win)
         g["Volume_Z20"] = zscore(g["Volume"], z_win)
 
@@ -508,10 +478,10 @@ def build_sheet_df(data, sector_df, mode="7D"):
         g.loc[g.index[-1], "Slope20"] = sl
         g.loc[g.index[-1], "R2_20"] = r2
 
-        # Vol expansion uses both ATR7_% and ATR_% series (same on both sheets)
+        # Vol expansion (same on both sheets)
         ve_flag = vol_expansion_flag(g["ATR7_%"], g["ATR_%"])
 
-        # Apply signal logic per sheet
+        # Apply signal logic
         if mode == "7D":
             g = signals_7d(g)
         else:
@@ -521,22 +491,12 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         # Per-mode breakout quality + reason + false breakout reference
         if mode == "7D":
-            breakout_quality = (
-                (pd.notna(last["HH7"]) and last["Close"] >= last["HH7"]) and
-                (pd.notna(last["VMA7"]) and last["Volume"] > last["VMA7"]) and
-                (pd.notna(last["UpperWickPct"]) and last["UpperWickPct"] < 0.30)
-            )
             reason = build_reason_7d(last)
             reg = vol_regime_from_atr_pct(last["ATR7_%"])
             fb_flag, fb_score = false_breakout_metrics(
                 last["Close"], last["HH7"], last["Volume"], last["VMA7"], last["UpperWickPct"]
             )
         else:
-            breakout_quality = (
-                (pd.notna(last["HH15"]) and last["Close"] >= last["HH15"]) and
-                (pd.notna(last["VMA15"]) and last["Volume"] > last["VMA15"]) and
-                (pd.notna(last["UpperWickPct"]) and last["UpperWickPct"] < 0.30)
-            )
             reason = build_reason_15d(last)
             reg = vol_regime_from_atr_pct(last["ATR_%"])
             fb_flag, fb_score = false_breakout_metrics(
@@ -562,7 +522,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "EarlyScore": es,
             "Confidence": float(last["Confidence"]) if pd.notna(last["Confidence"]) else None,
             "Confidence_Advanced": conf_adv,
-            "RankScore": None,  # fill after sector relative strength calc
+            "RankScore": None,  # fill later
 
             "Close": float(last["Close"]),
             "Volume": float(last["Volume"]),
@@ -624,10 +584,10 @@ def build_sheet_df(data, sector_df, mode="7D"):
     df = df.merge(sector_mom, on="Sector", how="left")
     df["Sector Signal"] = df["Sector_RET10"].apply(sector_signal_from_ret)
 
-    # Sector relative strength (internal for RankScore only)
+    # Sector relative strength for RankScore
     df["__SectorRelPos"] = ((df["RET10_%"] - df["Sector_RET10"]) > 0).fillna(False)
 
-    # RankScore (mode-specific breakout)
+    # Breakout quality (mode specific)
     if mode == "7D":
         bq = ((df["Close"] >= df["HH7"]) & (df["Volume"] > df["VMA7"]) & (df["UpperWickPct"] < 0.30)).fillna(False)
     else:
@@ -640,10 +600,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
     ]
     df = df.drop(columns=["__SectorRelPos"], errors="ignore")
 
-    # Ensure output order
     df = df[[c for c in FINAL_COLS if c in df.columns]]
-
-    # Sort best first
     df = df.sort_values(["RankScore", "EarlyScore", "Confidence_Advanced"], ascending=[False, False, False])
     return df
 
@@ -657,18 +614,37 @@ def main():
     data = load_latest_files(DATA_DIR, latest_n=LATEST_FILES_TO_LOAD)
     sector_df = load_sector_master(SECTOR_FILE)
 
+    # Main sheets
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
 
+    # BUY/SELL sheets combining BOTH modes
+    buy7 = df7[df7["Stock Signal"] == "BUY"].copy()
+    sell7 = df7[df7["Stock Signal"] == "SELL"].copy()
+    buy15 = df15[df15["Stock Signal"] == "BUY"].copy()
+    sell15 = df15[df15["Stock Signal"] == "SELL"].copy()
+
+    buy7.insert(0, "Mode", "7D")
+    sell7.insert(0, "Mode", "7D")
+    buy15.insert(0, "Mode", "15D")
+    sell15.insert(0, "Mode", "15D")
+
+    buy_all = pd.concat([buy7, buy15], ignore_index=True)
+    sell_all = pd.concat([sell7, sell15], ignore_index=True)
+
+    # Ensure full column order for these sheets
+    buy_all = buy_all[[c for c in BUYSELL_COLS if c in buy_all.columns]]
+    sell_all = sell_all[[c for c in BUYSELL_COLS if c in sell_all.columns]]
+
+    # Optional sorting
+    buy_all = buy_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
+    sell_all = sell_all.sort_values(["Mode", "RankScore"], ascending=[True, False])
+
+    # ---------- WRITE EXCEL ----------
     wb = Workbook()
 
-    # Sheet 1: 7D
-    wb.active.title = "Signals_7D"
-    ws1 = wb["Signals_7D"]
-    write_table(ws1, df7, "Signals7DTbl")
-
-    number_format(ws1, {
-        # 2 decimals for %/decimal indicators
+    # helper formatting mapping (2 decimals + nice formats)
+    fmt_map = {
         "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
         "Confidence":"0.00","Confidence_Advanced":"0.00",
         "UpperWickPct":"0.00",
@@ -684,43 +660,47 @@ def main():
         "HH7":"#,##0.00","HH15":"#,##0.00","LL7":"#,##0.00","LL15":"#,##0.00",
         "VMA7":"#,##0","VMA15":"#,##0",
         "EarlyScore":"0",
-    })
+    }
 
+    # Sheet 1: Signals_7D
+    wb.active.title = "Signals_7D"
+    ws1 = wb["Signals_7D"]
+    write_table(ws1, df7, "Signals7DTbl")
+    number_format(ws1, fmt_map)
     color_scale(ws1, "RankScore")
     color_scale(ws1, "Confidence_Advanced")
     color_scale(ws1, "EarlyScore")
     color_scale(ws1, "FalseBreakoutScore")
 
-    # Sheet 2: 15D
+    # Sheet 2: Signals_15D
     ws2 = wb.create_sheet("Signals_15D")
     write_table(ws2, df15, "Signals15DTbl")
-
-    number_format(ws2, {
-        # 2 decimals for %/decimal indicators
-        "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
-        "Confidence":"0.00","Confidence_Advanced":"0.00",
-        "UpperWickPct":"0.00",
-        "ATR7":"0.00","ATR7_%":"0.00","ATR15":"0.00","ATR_%":"0.00",
-        "Close_Z20":"0.00","Volume_Z20":"0.00",
-        "Slope20":"0.00","R2_20":"0.00",
-        "RankScore":"0.00",
-        "Sector_RET10":"0.00",
-        "FalseBreakoutScore":"0.00",
-        "Close":"#,##0.00",
-        "Volume":"#,##0",
-        "MA7":"#,##0.00","MA10":"#,##0.00","MA15":"#,##0.00","MA30":"#,##0.00",
-        "HH7":"#,##0.00","HH15":"#,##0.00","LL7":"#,##0.00","LL15":"#,##0.00",
-        "VMA7":"#,##0","VMA15":"#,##0",
-        "EarlyScore":"0",
-    })
-
+    number_format(ws2, fmt_map)
     color_scale(ws2, "RankScore")
     color_scale(ws2, "Confidence_Advanced")
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
+    # Sheet 3: BUY_ALL
+    ws3 = wb.create_sheet("BUY_ALL")
+    write_table(ws3, buy_all, "BuyAllTbl")
+    number_format(ws3, fmt_map)
+    color_scale(ws3, "RankScore")
+    color_scale(ws3, "Confidence_Advanced")
+    color_scale(ws3, "EarlyScore")
+    color_scale(ws3, "FalseBreakoutScore")
+
+    # Sheet 4: SELL_ALL
+    ws4 = wb.create_sheet("SELL_ALL")
+    write_table(ws4, sell_all, "SellAllTbl")
+    number_format(ws4, fmt_map)
+    color_scale(ws4, "RankScore")
+    color_scale(ws4, "Confidence_Advanced")
+    color_scale(ws4, "EarlyScore")
+    color_scale(ws4, "FalseBreakoutScore")
+
     wb.save(OUT_PATH)
-    print(f"✅ Excel created with 2 sheets: {OUT_PATH}")
+    print(f"✅ Excel created with 4 sheets: {OUT_PATH}")
 
 
 if __name__ == "__main__":
