@@ -55,14 +55,14 @@
     .drop small{ color: var(--muted); display:block; }
     .btn{
       border:1px solid var(--border);
-      background: rgba(255,255,255,.06);
+      background: #fff;
       color: var(--text);
       padding: 9px 12px;
       border-radius: 12px;
       cursor:pointer;
-      font-weight: 700;
+      font-weight: 800;
     }
-    .btn:hover{ background: rgba(255,255,255,.10); }
+    .btn:hover{ background: rgba(37,99,235,.08); border-color: rgba(37,99,235,.25); }
     .btn:disabled{ opacity:.5; cursor:not-allowed; }
 
     .tabs{
@@ -73,15 +73,15 @@
       padding: 10px 12px;
       border:1px solid var(--border);
       border-radius: 999px;
-      background: rgba(18,28,49,.55);
+      background:#fff;
       cursor:pointer;
       font-weight: 800;
       color: var(--muted);
       user-select:none;
     }
     .tab.active{
-      background: rgba(105,167,255,.14);
-      border-color: rgba(105,167,255,.4);
+      background: rgba(37,99,235,.10);
+      border-color: rgba(37,99,235,.35);
       color: var(--text);
     }
 
@@ -99,7 +99,7 @@
       box-shadow: 0 6px 16px rgba(15,23,42,.06);
     }
     .kpi{ grid-column: span 3; }
-    .kpi h3{ margin:0; font-size: 12px; color: var(--muted); font-weight: 700; }
+    .kpi h3{ margin:0; font-size: 12px; color: var(--muted); font-weight: 800; }
     .kpi .v{ margin-top:6px; font-size: 22px; font-weight: 900; }
     .kpi .s{ margin-top:4px; font-size: 12px; color: var(--muted); }
 
@@ -108,7 +108,7 @@
     .row{ display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
     .controls{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     input, select{
-      background: rgba(255,255,255,.06);
+      background: #fff;
       border: 1px solid var(--border);
       color: var(--text);
       padding: 9px 10px;
@@ -126,23 +126,30 @@
     .span12{ grid-column: span 12; }
 
     canvas{display:block; width:100% !important; height:340px !important;}
+
+    .table-wrap{ overflow:auto; }
     table{
       width:100%;
       border-collapse: collapse;
       margin-top: 10px;
       font-size: 12px;
+      table-layout:auto;
     }
     th, td{
       padding: 10px 8px;
-      border-bottom: 1px solid rgba(255,255,255,.07);
+      border-bottom: 1px solid rgba(15,23,42,.08);
       vertical-align: middle;
+      white-space:nowrap;
     }
     th{
       text-align:left;
       color: var(--muted);
-      font-weight: 800;
+      font-weight: 900;
       user-select:none;
       cursor:pointer;
+      background:#f8fafc;
+      overflow:visible !important;
+      text-overflow:clip !important;
     }
     td.num{ text-align:right; font-variant-numeric: tabular-nums; }
     .pill{
@@ -150,11 +157,11 @@
       padding: 4px 10px; border-radius: 999px;
       font-weight: 900; font-size: 11px;
       border:1px solid var(--border);
-      background: rgba(255,255,255,.06);
+      background: rgba(15,23,42,.03);
     }
-    .pill.good{ border-color: rgba(86,211,100,.35); background: rgba(86,211,100,.12); }
-    .pill.bad { border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.12); }
-    .pill.warn{ border-color: rgba(255,209,102,.35); background: rgba(255,209,102,.12); }
+    .pill.good{ border-color: rgba(22,163,74,.35); background: rgba(22,163,74,.10); }
+    .pill.bad { border-color: rgba(220,38,38,.35); background: rgba(220,38,38,.10); }
+    .pill.warn{ border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
 
     .hidden{ display:none !important; }
 
@@ -163,7 +170,7 @@
       padding: 12px 14px;
       border:1px solid var(--border);
       border-radius: 16px;
-      background: rgba(18,28,49,.55);
+      background: #fff;
       color: var(--muted);
       font-size: 12px;
       line-height: 1.4;
@@ -172,53 +179,21 @@
     @media (max-width: 1100px){
       .kpi{ grid-column: span 6; }
       .two, .three{ grid-template-columns: 1fr; }
-      .drop{
-      border:2px dashed #c7d2fe;
-      background:#f8faff;
-      padding:10px 12px;
-      border-radius:14px;
-      cursor:pointer;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      min-width:320px;
-      justify-content:space-between;
     }
-    }
-  
 
-th{ background:#f8fafc; }
+    /* Auto-feed mode: hide manual upload UI */
+    #dropZone, #fileInput { display: none !important; }
 
-
-/* Auto-feed mode: hide manual upload UI */
-#dropZone, #fileInput { display: none !important; }
-
-/* -------- Period controls -------- */
-.period-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0 4px 0}
-.period-controls .label{font-weight:800;color:var(--text)}
-.period-controls select{padding:10px 12px;border:1px solid rgba(15,23,42,.18);border-radius:999px;background:#fff;font-weight:700}
-.period-controls .btnrow{display:flex;flex-wrap:wrap;gap:8px}
-.period-controls .pbtn{padding:10px 12px;border-radius:999px;border:1px solid rgba(15,23,42,.18);background:#fff;font-weight:800;cursor:pointer}
-.period-controls .pbtn.active{background:rgba(37,99,235,.12);border-color:rgba(37,99,235,.35)}
-
-
-/* ✅ Fix table header truncation (Broker → Symbol detail table) */
-.table-wrap{ overflow:auto; }
-table{ table-layout:auto; }
-th, td{ white-space:nowrap; }
-th{ overflow:visible !important; text-overflow:clip !important; }
-
-
-/* Broker symbol table specific (safe even if IDs absent) */
-#brokerSymbolTable, #brokerSymbolTbl, #brokerSymbolTable table, #brokerSymbolTbl table{
-  table-layout:auto !important;
-}
-#brokerSymbolTable th, #brokerSymbolTbl th{
-  max-width:none !important;
-}
-
-</style>
+    /* -------- Period controls -------- */
+    .period-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0 4px 0}
+    .period-controls .label{font-weight:900;color:var(--text)}
+    .period-controls select{padding:10px 12px;border:1px solid rgba(15,23,42,.18);border-radius:999px;background:#fff;font-weight:800}
+    .period-controls .btnrow{display:flex;flex-wrap:wrap;gap:8px}
+    .period-controls .pbtn{padding:10px 12px;border-radius:999px;border:1px solid rgba(15,23,42,.18);background:#fff;font-weight:900;cursor:pointer}
+    .period-controls .pbtn.active{background:rgba(37,99,235,.12);border-color:rgba(37,99,235,.35)}
+  </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="topbar">
@@ -230,10 +205,9 @@ th{ overflow:visible !important; text-overflow:clip !important; }
         </p>
       </div>
 
-    <div id="periodBadge" class="pill warn" style="font-weight:900;">
-      Period: Auto
-    </div>
-
+      <div id="periodBadge" class="pill warn" style="font-weight:900;">
+        Period: Auto
+      </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <label class="drop" id="dropZone" title="Drop CSV or click to select">
@@ -249,30 +223,29 @@ th{ overflow:visible !important; text-overflow:clip !important; }
       </div>
     </div>
 
-  <div class="period-controls" id="periodControls">
-    <span class="label">Select period:</span>
-    <select id="periodSelect">
-      <option value="auto">Auto</option>
-      <option value="1">1D</option>
-      <option value="7">7D</option>
-      <option value="15">15D</option>
-      <option value="30">1M</option>
-      <option value="90">3M</option>
-      <option value="180">6M</option>
-      <option value="365">1Y</option>
-      <option value="all">All Available</option>
-    </select>
-    <div class="btnrow" aria-label="Quick period buttons">
-      <button class="pbtn" data-v="1" type="button">1D</button>
-      <button class="pbtn" data-v="7" type="button">7D</button>
-      <button class="pbtn" data-v="15" type="button">15D</button>
-      <button class="pbtn" data-v="30" type="button">1M</button>
-      <button class="pbtn" data-v="90" type="button">3M</button>
-      <button class="pbtn" data-v="180" type="button">6M</button>
-      <button class="pbtn" data-v="365" type="button">1Y</button>
+    <div class="period-controls" id="periodControls">
+      <span class="label">Select period:</span>
+      <select id="periodSelect">
+        <option value="auto">Auto</option>
+        <option value="1">1D</option>
+        <option value="7">7D</option>
+        <option value="15">15D</option>
+        <option value="30">1M</option>
+        <option value="90">3M</option>
+        <option value="180">6M</option>
+        <option value="365">1Y</option>
+        <option value="all">All Available</option>
+      </select>
+      <div class="btnrow" aria-label="Quick period buttons">
+        <button class="pbtn" data-v="1" type="button">1D</button>
+        <button class="pbtn" data-v="7" type="button">7D</button>
+        <button class="pbtn" data-v="15" type="button">15D</button>
+        <button class="pbtn" data-v="30" type="button">1M</button>
+        <button class="pbtn" data-v="90" type="button">3M</button>
+        <button class="pbtn" data-v="180" type="button">6M</button>
+        <button class="pbtn" data-v="365" type="button">1Y</button>
+      </div>
     </div>
-  </div>
-
 
     <div class="tabs">
       <div class="tab active" data-tab="market">Market</div>
@@ -349,8 +322,6 @@ th{ overflow:visible !important; text-overflow:clip !important; }
 
     <!-- STOCKS -->
     <div id="tab-stocks" class="grid hidden">
-      
-
       <div class="card panel">
         <div class="row">
           <h2>Recommendations (Data-driven signals • Not financial advice)</h2>
@@ -384,9 +355,7 @@ th{ overflow:visible !important; text-overflow:clip !important; }
               </thead>
               <tbody></tbody>
             </table>
-            <div class="hint">
-              Higher score = stronger accumulation + liquidity + big-trade support over selected period.
-            </div>
+            <div class="hint">Higher score = stronger accumulation + liquidity + big-trade support over selected period.</div>
           </div>
 
           <div class="card" style="background:var(--panel2);">
@@ -404,9 +373,7 @@ th{ overflow:visible !important; text-overflow:clip !important; }
               </thead>
               <tbody></tbody>
             </table>
-            <div class="hint">
-              Higher score = stronger distribution (selling pressure) over selected period.
-            </div>
+            <div class="hint">Higher score = stronger distribution (selling pressure) over selected period.</div>
           </div>
         </div>
 
@@ -415,7 +382,8 @@ th{ overflow:visible !important; text-overflow:clip !important; }
           <b>signals</b> (watchlist ideas) to combine with your own strategy, risk limits, and confirmations.
         </div>
       </div>
-<div class="card panel">
+
+      <div class="card panel">
         <div class="row">
           <h2>Stocks Table (filter, rank, signals)</h2>
           <div class="controls">
@@ -444,26 +412,28 @@ th{ overflow:visible !important; text-overflow:clip !important; }
           </div>
         </div>
 
-        <table id="stocksTable">
-          <thead>
-            <tr>
-              <th data-k="symbol">Symbol</th>
-              <th data-k="trades">Trades</th>
-              <th data-k="qty">Qty</th>
-              <th data-k="amount">Turnover</th>
-              <th data-k="vwap">VWAP</th>
-              <th data-k="high">High</th>
-              <th data-k="low">Low</th>
-              <th data-k="rangePct">Range%</th>
-              <th data-k="pressure">Pressure</th>
-              <th data-k="bigTradeShare">Big%</th>
-              <th data-k="ratesCount">#Rates</th>
-              <th data-k="modalRateShare">Modal%</th>
-              <th data-k="signal">Signal</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-wrap">
+          <table id="stocksTable">
+            <thead>
+              <tr>
+                <th data-k="symbol">Symbol</th>
+                <th data-k="trades">Trades</th>
+                <th data-k="qty">Qty</th>
+                <th data-k="amount">Turnover</th>
+                <th data-k="vwap">VWAP</th>
+                <th data-k="high">High</th>
+                <th data-k="low">Low</th>
+                <th data-k="rangePct">Range%</th>
+                <th data-k="pressure">Pressure</th>
+                <th data-k="bigTradeShare">Big%</th>
+                <th data-k="ratesCount">#Rates</th>
+                <th data-k="modalRateShare">Modal%</th>
+                <th data-k="signal">Signal</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
 
         <div class="hint">
           Signals (rule-based):<br/>
@@ -496,8 +466,8 @@ th{ overflow:visible !important; text-overflow:clip !important; }
           <h2>Brokers Table (net flow, focus)</h2>
           <div class="controls">
             <input id="brokerSearch" placeholder="Search broker code (e.g., 84)" />
-                        <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., ICFC)" />
-<select id="brokerRankBy">
+            <input id="brokerSymbolSearch" placeholder="Filter by symbol (e.g., ICFC)" />
+            <select id="brokerRankBy">
               <option value="netQty" selected>Rank: |Net Qty|</option>
               <option value="buyQty">Rank: Buy Qty</option>
               <option value="sellQty">Rank: Sell Qty</option>
@@ -519,35 +489,37 @@ th{ overflow:visible !important; text-overflow:clip !important; }
           </div>
         </div>
 
-        <table id="brokersTable">
-          <thead>
-            <tr>
-            <th data-k="symbol">Symbol</th>
-              <th data-k="broker">Broker</th>
-              <th data-k="buyTrades">Buy Trades</th>
-              <th data-k="buyQty">Buy Qty</th>
-              <th data-k="buyAmt">Buy Amount</th>
-              <th data-k="sellTrades">Sell Trades</th>
-              <th data-k="sellQty">Sell Qty</th>
-              <th data-k="sellAmt">Sell Amount</th>
-              <th data-k="netQty">Net Qty</th>
-              <th data-k="netAmt">Net Amount</th>
-              <th data-k="symbols">#Symbols</th>
-              <th data-k="focus">Focus%</th>
-              <th data-k="tag">Tag</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-wrap">
+          <table id="brokersTable">
+            <thead>
+              <tr>
+                <th data-k="symbol">Symbol</th>
+                <th data-k="broker">Broker</th>
+                <th data-k="buyTrades">Buy Trades</th>
+                <th data-k="buyQty">Buy Qty</th>
+                <th data-k="buyAmt">Buy Amount</th>
+                <th data-k="sellTrades">Sell Trades</th>
+                <th data-k="sellQty">Sell Qty</th>
+                <th data-k="sellAmt">Sell Amount</th>
+                <th data-k="netQty">Net Qty</th>
+                <th data-k="netAmt">Net Amount</th>
+                <th data-k="symbols">#Symbols</th>
+                <th data-k="focus">Focus%</th>
+                <th data-k="tag">Tag</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
 
         <div class="hint">
           <b>Focus%</b> = turnover from broker’s top-3 symbols / total broker turnover. High focus often indicates directional intent.
+          <br/><b>Tip:</b> Click any row to populate <b>Broker → Symbol Detail</b> below.
         </div>
       </div>
-    
 
-<!-- Broker -> Symbol Detail (individual level) -->
-      <div class="card panel" style="margin-top:14px;">
+      <!-- Broker -> Symbol Detail (individual level) -->
+      <div class="card panel">
         <div class="row">
           <h2>Broker → Symbol Detail (individual level)</h2>
           <div class="controls" style="flex-wrap:wrap;">
@@ -570,11 +542,11 @@ th{ overflow:visible !important; text-overflow:clip !important; }
         </div>
 
         <div class="hint" style="margin-top:6px;">
-          Click any <b>broker row</b> in the table above to populate this table. It shows which <b>stocks (symbols)</b> that broker bought/sold today.
+          Click any <b>broker row</b> above to populate this table. It shows which <b>stocks (symbols)</b> that broker bought/sold over the selected period.
           <b>Net%</b> = Net Amount / (Buy Amount + Sell Amount).
         </div>
 
-        <div style="overflow:auto; margin-top:10px;">
+        <div class="table-wrap">
           <table class="tbl" id="brokerSymbolDetailTable">
             <thead>
               <tr>
@@ -597,13 +569,9 @@ th{ overflow:visible !important; text-overflow:clip !important; }
           </table>
         </div>
       </div>
+    </div>
 
-
-    
-</div>
-
-
-      <!-- STOCK DETAIL -->
+    <!-- STOCK DETAIL -->
     <div id="tab-detail" class="grid hidden">
       <div class="card panel">
         <div class="row">
@@ -675,67 +643,69 @@ th{ overflow:visible !important; text-overflow:clip !important; }
     </div>
   </div>
 
-<!-- Broker drilldown modal -->
-<div id="brokerModal" class="hidden" style="
-  position:fixed; inset:0; background:rgba(0,0,0,.35);
-  display:none; align-items:center; justify-content:center; padding:18px; z-index:9999;
-">
-  <div style="
-    width:min(1100px, 96vw); max-height:90vh; overflow:auto;
-    background:#fff; border:1px solid rgba(15,23,42,.18);
-    border-radius:18px; box-shadow:0 18px 60px rgba(15,23,42,.25);
-    padding:14px;
+  <!-- Broker drilldown modal -->
+  <div id="brokerModal" class="hidden" style="
+    position:fixed; inset:0; background:rgba(0,0,0,.35);
+    display:none; align-items:center; justify-content:center; padding:18px; z-index:9999;
   ">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-      <div>
-        <div style="font-weight:900; font-size:14px;">Broker Detail</div>
-        <div id="brokerModalTitle" style="color:#5f6b85; font-size:12px;">—</div>
-      </div>
-      <button id="brokerModalClose" class="btn" type="button">Close</button>
-    </div>
-
-    <div class="two" style="margin-top:10px;">
-      <div class="card" style="background:var(--panel2);">
-        <h2 style="margin:0 0 8px 0; font-size:13px;">Top Bought Stocks</h2>
-        <table id="brokerBuyStocksTable">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th class="num">Buy Qty</th>
-              <th class="num">Buy Amount</th>
-              <th class="num">Net Qty</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+    <div style="
+      width:min(1100px, 96vw); max-height:90vh; overflow:auto;
+      background:#fff; border:1px solid rgba(15,23,42,.18);
+      border-radius:18px; box-shadow:0 18px 60px rgba(15,23,42,.25);
+      padding:14px;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:900; font-size:14px;">Broker Detail</div>
+          <div id="brokerModalTitle" style="color:#5f6b85; font-size:12px;">—</div>
+        </div>
+        <button id="brokerModalClose" class="btn" type="button">Close</button>
       </div>
 
-      <div class="card" style="background:var(--panel2);">
-        <h2 style="margin:0 0 8px 0; font-size:13px;">Top Sold Stocks</h2>
-        <table id="brokerSellStocksTable">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th class="num">Sell Qty</th>
-              <th class="num">Sell Amount</th>
-              <th class="num">Net Qty</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
+      <div class="two" style="margin-top:10px;">
+        <div class="card" style="background:var(--panel2);">
+          <h2 style="margin:0 0 8px 0; font-size:13px;">Top Bought Stocks</h2>
+          <table id="brokerBuyStocksTable">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="num">Buy Qty</th>
+                <th class="num">Buy Amount</th>
+                <th class="num">Net Qty</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
 
-    <div class="hint" style="margin-top:8px;">
-      Click any row to open Stock Detail. (Broker × Symbol aggregation.)
+        <div class="card" style="background:var(--panel2);">
+          <h2 style="margin:0 0 8px 0; font-size:13px;">Top Sold Stocks</h2>
+          <table id="brokerSellStocksTable">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th class="num">Sell Qty</th>
+                <th class="num">Sell Amount</th>
+                <th class="num">Net Qty</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="hint" style="margin-top:8px;">
+        Click any row to open Stock Detail. (Broker × Symbol aggregation.)
+      </div>
     </div>
   </div>
-</div>
+
 <script>
 /* -------------------- utilities -------------------- */
-const fmt = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+const fmt  = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
 const fmt1 = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1});
 const fmt0 = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+
 function toNum(x){
   if(x===null || x===undefined) return 0;
   if(typeof x === 'number') return x;
@@ -746,10 +716,10 @@ function toNum(x){
 function pct(x){ return (x*100); }
 function clamp(n,a,b){ return Math.min(b, Math.max(a,n)); }
 function pillClass(tag){
-  if(tag.includes('Strong')) return 'good';
-  if(tag.includes('Warning')) return 'bad';
-  if(tag.includes('Risk')) return 'warn';
-  if(tag.includes('Mild')) return 'warn';
+  if(String(tag).includes('Strong')) return 'good';
+  if(String(tag).includes('Warning')) return 'bad';
+  if(String(tag).includes('Risk')) return 'warn';
+  if(String(tag).includes('Mild')) return 'warn';
   return '';
 }
 function downloadText(filename, text){
@@ -759,15 +729,23 @@ function downloadText(filename, text){
   a.href = url; a.download = filename; a.click();
   setTimeout(()=>URL.revokeObjectURL(url), 500);
 }
+// number helpers (fixes fmt()/cr() errors)
+function n0(x){ return fmt0.format(toNum(x)); }
+function n1(x){ return fmt1.format(toNum(x)); }
+function cr(x){ return fmt1.format(toNum(x)); } // customize if you want "Rs. "
 
 /* -------------------- global state -------------------- */
 let rawRows = [];
 let stocks = [];
 let brokers = [];
-let brokerSymAgg = new Map(); // broker -> Map(symbol -> {buyQty,sellQty,buyAmt,sellAmt,netQty,netAmt})
+let brokerSymAgg = new Map(); // broker -> Map(symbol -> {buyTrades,sellTrades,buyQty,sellQty,buyAmt,sellAmt,netQty,netAmt})
 let stockDetail = new Map(); // symbol -> {rows, ...}
 let charts = {}; // key -> Chart instance
 let bigTradeThreshold = 0.99;
+
+// for renderMarket() calls without params
+let __top10Share__ = 0;
+let __bigCut__ = 0;
 
 /* -------------------- parsing & compute -------------------- */
 function normalizeRow(r){
@@ -784,6 +762,9 @@ function normalizeRow(r){
 }
 
 function computeAll(){
+  // reset brokerSymAgg ONCE here (do NOT reset later)
+  brokerSymAgg = new Map();
+
   // Filter valid
   const rows = rawRows.filter(r => r.symbol && r.qty>0 && r.amt>=0);
 
@@ -791,17 +772,20 @@ function computeAll(){
   const totalTrades = rows.length;
   let totalQty=0, totalAmt=0;
   const amounts = [];
-  for(const r of rows){ 
-    // --- Broker x Symbol aggregation (for drilldown + symbol filter)
+
+  // Broker x Symbol aggregation (for drilldown + symbol detail)
+  for(const r of rows){
     // Buyer side
     if (r.buyer && r.symbol){
       if(!brokerSymAgg.has(r.buyer)) brokerSymAgg.set(r.buyer, new Map());
       const m = brokerSymAgg.get(r.buyer);
       if(!m.has(r.symbol)) m.set(r.symbol, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
       const o = m.get(r.symbol);
-      o.buyQty += r.qty; o.buyAmt += r.amt;
       o.buyTrades += 1;
-      o.netQty += r.qty; o.netAmt += r.amt;
+      o.buyQty += r.qty;
+      o.buyAmt += r.amt;
+      o.netQty += r.qty;
+      o.netAmt += r.amt;
     }
     // Seller side
     if (r.seller && r.symbol){
@@ -809,29 +793,32 @@ function computeAll(){
       const m = brokerSymAgg.get(r.seller);
       if(!m.has(r.symbol)) m.set(r.symbol, {buyTrades:0,sellTrades:0,buyQty:0,sellQty:0,buyAmt:0,sellAmt:0,netQty:0,netAmt:0});
       const o = m.get(r.symbol);
-      o.sellQty += r.qty; o.sellAmt += r.amt;
       o.sellTrades += 1;
-      o.netQty -= r.qty; o.netAmt -= r.amt;
+      o.sellQty += r.qty;
+      o.sellAmt += r.amt;
+      o.netQty -= r.qty;
+      o.netAmt -= r.amt;
     }
 
-totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
+    totalQty += r.qty;
+    totalAmt += r.amt;
+    amounts.push(r.amt);
+  }
 
   amounts.sort((a,b)=>a-b);
   const p50 = amounts.length ? amounts[Math.floor(amounts.length*0.50)] : 0;
   const p90 = amounts.length ? amounts[Math.floor(amounts.length*0.90)] : 0;
-  const p99 = amounts.length ? amounts[Math.floor(amounts.length*0.99)] : 0;
 
   // Liquidity Quality score (simple): more broad activity = better
-  // score = (median trade amount / p90) capped + (trades / (unique symbols * 10)) capped, average.
   const uniqSyms = new Set(rows.map(r=>r.symbol)).size || 1;
   const score1 = p90 ? clamp(p50/p90, 0, 1) : 0;
   const score2 = clamp(totalTrades/(uniqSyms*10), 0, 1);
   const liqScore = (score1 + score2)/2;
 
-  setKPI('kpiTurnover', totalAmt, 'kpiTurnoverSub', `Across ${fmt0.format(uniqSyms)} symbols`);
-  setKPI('kpiVolume', totalQty, 'kpiVolumeSub', `Avg trade qty: ${fmt0.format(totalTrades? totalQty/totalTrades : 0)}`);
-  setKPI('kpiTrades', totalTrades, 'kpiTradesSub', `Median trade amount: ${fmt1.format(p50)}`);
-  document.getElementById('kpiLiquidity').textContent = `${fmt1.format(pct(liqScore))}%`;
+  setKPI('kpiTurnover', totalAmt, 'kpiTurnoverSub', `Across ${n0(uniqSyms)} symbols`);
+  setKPI('kpiVolume', totalQty, 'kpiVolumeSub', `Avg trade qty: ${n0(totalTrades? totalQty/totalTrades : 0)}`);
+  setKPI('kpiTrades', totalTrades, 'kpiTradesSub', `Median trade amount: ${n1(p50)}`);
+  document.getElementById('kpiLiquidity').textContent = `${n1(pct(liqScore))}%`;
   document.getElementById('kpiLiquiditySub').textContent = `Quality proxy (broad vs concentrated)`;
 
   // Big trade threshold (global) based on percentiles
@@ -842,6 +829,10 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
   const top10 = [...amounts].sort((a,b)=>b-a).slice(0,10).reduce((s,v)=>s+v,0);
   const top10Share = totalAmt ? top10/totalAmt : 0;
 
+  // store for renderMarket() calls without args
+  __top10Share__ = top10Share;
+  __bigCut__ = bigCut;
+
   // Per symbol aggregation + microstructure
   const bySym = new Map();
   for(const r of rows){
@@ -851,7 +842,7 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
         trades:0, qty:0, amt:0,
         hi:-Infinity, lo:Infinity,
         buyerQty:new Map(), sellerQty:new Map(),
-        rateQty:new Map(), // volume-by-price
+        rateQty:new Map(),
         tradeAmounts:[],
         bigAmt:0, bigTrades:0,
         ratesSet:new Set()
@@ -871,7 +862,6 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     if(r.amt >= bigCut){ o.bigAmt += r.amt; o.bigTrades += 1; }
   }
 
-  // Pressure, VWAP, modal price share, etc.
   stocks = Array.from(bySym.values()).map(o=>{
     const vwap = o.qty ? o.amt/o.qty : 0;
     const buyArr = Array.from(o.buyerQty.values()).sort((a,b)=>b-a);
@@ -882,7 +872,6 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     const sellShare = o.qty ? top5Sell/o.qty : 0;
     const pressure = buyShare - sellShare;
 
-    // modal price share (volume at most traded price)
     let modalQty = 0;
     for(const v of o.rateQty.values()) modalQty = Math.max(modalQty, v);
     const modalRateShare = o.qty ? modalQty/o.qty : 0;
@@ -891,7 +880,6 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     const rangePct = vwap ? (o.hi - o.lo)/vwap : 0;
     const bigTradeShare = o.amt ? o.bigAmt/o.amt : 0;
 
-    // turnover rank flag (top 20%)
     return {
       symbol:o.symbol,
       trades:o.trades,
@@ -909,12 +897,12 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     };
   });
 
-  // Rank turnover to decide strong accumulation tag
+  // Signal tags
   const byAmt = [...stocks].sort((a,b)=>b.amount-a.amount);
   const cutoff = byAmt.length ? byAmt[Math.max(0, Math.floor(byAmt.length*0.2)-1)].amount : 0;
   for(const s of stocks){
     const isTopTurnover = cutoff>0 && s.amount >= cutoff;
-    const manipulationRisk = (s.modalRateShare >= 0.45 && s.ratesCount <= 3 && s.trades >= 10); // heuristic
+    const manipulationRisk = (s.modalRateShare >= 0.45 && s.ratesCount <= 3 && s.trades >= 10);
     if(manipulationRisk) s.signal = 'Manipulation Risk';
     else if(s.pressure >= 0.25 && isTopTurnover) s.signal = 'Strong Accumulation';
     else if(s.pressure <= -0.25) s.signal = 'Distribution Warning';
@@ -922,63 +910,51 @@ totalQty += r.qty; totalAmt += r.amt; amounts.push(r.amt); }
     else s.signal = 'Neutral';
   }
 
-  // Brokers market aggregation + focus
+  // Broker market aggregation (buy/sell totals + per-symbol maps)
   const byBroker = new Map();
-    brokerSymAgg = new Map();
-for(const r of rows){
+  for(const r of rows){
     if(r.buyer){
-      if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, {broker:r.buyer, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map(), symBuyTrades:new Map(), symBuyQty:new Map(), symBuyAmt:new Map(), symSellTrades:new Map(), symSellQty:new Map(), symSellAmt:new Map()});
+      if(!byBroker.has(r.buyer)) byBroker.set(r.buyer, newBrokerObj(r.buyer));
       const b = byBroker.get(r.buyer);
       b.buyTrades += 1; b.buyQty += r.qty; b.buyAmt += r.amt;
       b.symAmt.set(r.symbol, (b.symAmt.get(r.symbol)||0) + r.amt);
-    
-      // per-symbol BUY breakdown
       b.symBuyTrades.set(r.symbol, (b.symBuyTrades.get(r.symbol)||0) + 1);
       b.symBuyQty.set(r.symbol, (b.symBuyQty.get(r.symbol)||0) + r.qty);
       b.symBuyAmt.set(r.symbol, (b.symBuyAmt.get(r.symbol)||0) + r.amt);
-}
+    }
     if(r.seller){
-      if(!byBroker.has(r.seller)) byBroker.set(r.seller, {broker:r.seller, buyTrades:0, buyQty:0, buyAmt:0, sellTrades:0, sellQty:0, sellAmt:0, symAmt:new Map(), symBuyTrades:new Map(), symBuyQty:new Map(), symBuyAmt:new Map(), symSellTrades:new Map(), symSellQty:new Map(), symSellAmt:new Map()});
+      if(!byBroker.has(r.seller)) byBroker.set(r.seller, newBrokerObj(r.seller));
       const s = byBroker.get(r.seller);
       s.sellTrades += 1; s.sellQty += r.qty; s.sellAmt += r.amt;
       s.symAmt.set(r.symbol, (s.symAmt.get(r.symbol)||0) + r.amt);
-    
-      // per-symbol SELL breakdown
       s.symSellTrades.set(r.symbol, (s.symSellTrades.get(r.symbol)||0) + 1);
       s.symSellQty.set(r.symbol, (s.symSellQty.get(r.symbol)||0) + r.qty);
       s.symSellAmt.set(r.symbol, (s.symSellAmt.get(r.symbol)||0) + r.amt);
-}
+    }
   }
 
   brokers = Array.from(byBroker.values()).map(b=>{
-const netQty = b.buyQty - b.sellQty;
+    const netQty = b.buyQty - b.sellQty;
     const netAmt = b.buyAmt - b.sellAmt;
     const symbols = b.symAmt.size;
-    // focus% = top3 symbol turnover / total turnover
+
     const sortedSym = Array.from(b.symAmt.values()).sort((a,c)=>c-a);
     const top3 = sortedSym.slice(0,3).reduce((s,v)=>s+v,0);
     const total = b.buyAmt + b.sellAmt;
     const focus = total ? top3/total : 0;
-    
-    // top traded symbol for this broker (by turnover amount)
-let topSymbol = '—';
-let topSymbolAmt = -Infinity;
-for(const [sym, amt] of b.symAmt.entries()){
-  if(amt > topSymbolAmt){ topSymbolAmt = amt; topSymbol = sym; }
-}
 
     const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Flat');
-    return { broker:b.broker, ...b, netQty, netAmt, symbols, focus, topSymbol, topSymbolAmt, tag };
+    return { broker:b.broker, ...b, netQty, netAmt, symbols, focus, tag };
   });
 
   // Stock detail storage
   stockDetail = new Map();
   for(const s of stocks){
-    stockDetail.set(s.symbol, { symbol:s.symbol, bigCut, rows: rows.filter(r=>r.symbol===s.symbol) });
+    stockDetail.set(s.symbol, { symbol:s.symbol, rows: rows.filter(r=>r.symbol===s.symbol) });
   }
 
   // Render everything
-  renderMarket(top10Share, bigCut);
+  renderMarket();
   renderStocks();
   renderRecommendations();
   renderBrokers();
@@ -989,13 +965,23 @@ for(const [sym, amt] of b.symAmt.entries()){
   document.getElementById('btnExportBrokers').disabled = false;
 }
 
+function newBrokerObj(code){
+  return {
+    broker:code,
+    buyTrades:0, buyQty:0, buyAmt:0,
+    sellTrades:0, sellQty:0, sellAmt:0,
+    symAmt:new Map(),
+    symBuyTrades:new Map(), symBuyQty:new Map(), symBuyAmt:new Map(),
+    symSellTrades:new Map(), symSellQty:new Map(), symSellAmt:new Map()
+  };
+}
+
 function setKPI(id, val, subId, subText){
-  document.getElementById(id).textContent = fmt1.format(val);
+  document.getElementById(id).textContent = n1(val);
   document.getElementById(subId).textContent = subText;
 }
 
-/* -------------------- rendering: market -------------------- */
-// ✅ High-DPI / anti-blur fix for Chart.js canvases (crisp visuals)
+/* -------------------- charts helpers -------------------- */
 const __DPR__ = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
 if (window.Chart && Chart.defaults){
   Chart.defaults.devicePixelRatio = __DPR__;
@@ -1006,10 +992,10 @@ if (window.Chart && Chart.defaults){
 function destroyChart(key){
   if(charts[key]){ charts[key].destroy(); charts[key]=null; }
 }
-
 function chartBar(canvasId, key, labels, data, label){
   destroyChart(key);
   const ctx = document.getElementById(canvasId);
+  if(!ctx) return;
   charts[key] = new Chart(ctx, {
     type:'bar',
     data:{ labels, datasets:[{label, data}] },
@@ -1019,18 +1005,18 @@ function chartBar(canvasId, key, labels, data, label){
       devicePixelRatio: __DPR__,
       plugins:{
         legend:{display:true},
-        tooltip:{callbacks:{ label:(c)=> `${label}: ${fmt1.format(c.parsed.y)}` }}
+        tooltip:{callbacks:{ label:(c)=> `${label}: ${n1(c.parsed.y)}` }}
       },
       scales:{
-        y:{ ticks:{ callback:(v)=> fmt1.format(v) } }
+        y:{ ticks:{ callback:(v)=> n1(v) } }
       }
     }
   });
 }
-
 function chartDoughnut(canvasId, key, labels, data, label){
   destroyChart(key);
   const ctx = document.getElementById(canvasId);
+  if(!ctx) return;
   charts[key] = new Chart(ctx, {
     type:'doughnut',
     data:{ labels, datasets:[{label, data}] },
@@ -1038,51 +1024,7 @@ function chartDoughnut(canvasId, key, labels, data, label){
   });
 }
 
-function renderMarket(top10Share, bigCut){
-  // Market top symbols chart (metric switch)
-  const metric = document.getElementById('marketMetric').value;
-  const topN = Number(document.getElementById('topNMarket').value || 20);
-
-  const sorted = [...stocks].sort((a,b)=>{
-    const va = metricValue(a, metric);
-    const vb = metricValue(b, metric);
-    return vb - va;
-  }).slice(0, topN);
-
-  chartBar(
-    'chartMarketTop', 'marketTop',
-    sorted.map(d=>d.symbol),
-    sorted.map(d=>metricValue(d, metric)),
-    metricLabel(metric)
-  );
-
-  // Broker dominance chart (net qty absolute)
-  const sortedB = [...brokers].sort((a,b)=> Math.abs(b.netQty)-Math.abs(a.netQty)).slice(0,10);
-  chartBar(
-    'chartMarketBrokers', 'marketBrokers',
-    sortedB.map(d=>String(d.broker)),
-    sortedB.map(d=>d.netQty),
-    'Net Qty (Buy-Sell)'
-  );
-
-  // Big trades by symbol (share of turnover)
-  const byBig = [...stocks].sort((a,b)=>b.bigTradeShare-a.bigTradeShare).slice(0,15);
-  chartBar(
-    'chartBigTrades', 'bigTrades',
-    byBig.map(d=>d.symbol),
-    byBig.map(d=>pct(d.bigTradeShare)),
-    'Big-trade share %'
-  );
-
-  // Concentration donut: top10 trades share vs rest
-  chartDoughnut(
-    'chartConcentration', 'concentration',
-    ['Top-10 trades turnover', 'Rest of trades turnover'],
-    [pct(top10Share), pct(1-top10Share)],
-    'Turnover share'
-  );
-}
-
+/* -------------------- rendering: market -------------------- */
 function metricLabel(m){
   return ({
     turnover:'Turnover',
@@ -1103,65 +1045,31 @@ function metricValue(d, m){
   return 0;
 }
 
+function renderMarket(){
+  const metric = document.getElementById('marketMetric').value;
+  const topN = Number(document.getElementById('topNMarket').value || 20);
+
+  const sorted = [...stocks].sort((a,b)=> metricValue(b, metric) - metricValue(a, metric)).slice(0, topN);
+  chartBar('chartMarketTop', 'marketTop', sorted.map(d=>d.symbol), sorted.map(d=>metricValue(d, metric)), metricLabel(metric));
+
+  // Broker dominance chart (net qty absolute)
+  const sortedB = [...brokers].sort((a,b)=> Math.abs(b.netQty)-Math.abs(a.netQty)).slice(0,10);
+  chartBar('chartMarketBrokers', 'marketBrokers', sortedB.map(d=>String(d.broker)), sortedB.map(d=>d.netQty), 'Net Qty (Buy-Sell)');
+
+  // Big trades by symbol (share of turnover)
+  const byBig = [...stocks].sort((a,b)=>b.bigTradeShare-a.bigTradeShare).slice(0,15);
+  chartBar('chartBigTrades', 'bigTrades', byBig.map(d=>d.symbol), byBig.map(d=>pct(d.bigTradeShare)), 'Big-trade share %');
+
+  // Concentration donut: top10 trades share vs rest
+  const top10Share = __top10Share__ || 0;
+  chartDoughnut('chartConcentration', 'concentration',
+    ['Top-10 trades turnover', 'Rest of trades turnover'],
+    [pct(top10Share), pct(1-top10Share)],
+    'Turnover share'
+  );
+}
+
 /* -------------------- rendering: stocks -------------------- */
-function renderStocks(){
-  // Table filters
-  const q = (document.getElementById('stockSearch').value||'').trim().toUpperCase();
-  const rankBy = document.getElementById('stockRankBy').value;
-  const minTrades = Number(document.getElementById('stockMinTrades').value||0);
-  const minTurn = Number(document.getElementById('stockMinTurn').value||0);
-
-  let rows = stocks.filter(s => s.trades>=minTrades && s.amount>=minTurn);
-  if(q) rows = rows.filter(s => s.symbol.toUpperCase().includes(q));
-
-  rows.sort((a,b)=> rankMetric(b, rankBy) - rankMetric(a, rankBy));
-
-  // Table render
-  const tbody = document.querySelector('#stocksTable tbody');
-  tbody.innerHTML = '';
-  for(const r of rows){
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt0.format(r.trades)}</td>
-      <td class="num">${fmt0.format(r.qty)}</td>
-      <td class="num">${fmt1.format(r.amount)}</td>
-      <td class="num">${fmt1.format(r.vwap)}</td>
-      <td class="num">${fmt1.format(r.high)}</td>
-      <td class="num">${fmt1.format(r.low)}</td>
-      <td class="num">${fmt1.format(pct(r.rangePct))}%</td>
-      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
-      <td class="num">${fmt1.format(pct(r.bigTradeShare))}%</td>
-      <td class="num">${fmt0.format(r.ratesCount)}</td>
-      <td class="num">${fmt1.format(pct(r.modalRateShare))}%</td>
-      <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
-    `;
-    tr.addEventListener('click', ()=>{
-      selectDetailSymbol(r.symbol);
-      switchTab('detail');
-    });
-tbody.appendChild(tr);
-}
-
-  // Heat chart
-  const hm = document.getElementById('heatMetric').value;
-  const top = [...stocks].sort((a,b)=> heatMetric(b,hm)-heatMetric(a,hm)).slice(0,20);
-  destroyChart('heat');
-  charts['heat'] = new Chart(document.getElementById('chartHeat'), {
-    type:'bar',
-    data:{
-      labels: top.map(d=>d.symbol),
-      datasets:[{ label: metricLabel2(hm), data: top.map(d=>heatMetric(d,hm)) }]
-    },
-    options:{
-      responsive:true,
-      maintainAspectRatio:false,
-      devicePixelRatio: __DPR__,
-      plugins:{ legend:{display:true} },
-      scales:{ y:{ ticks:{ callback:(v)=> fmt1.format(v) } } }
-    }
-  });
-}
 function rankMetric(r, m){
   if(m==='turnover') return r.amount;
   if(m==='volume') return r.qty;
@@ -1183,9 +1091,66 @@ function metricLabel2(m){
   return ({amount:'Turnover', qty:'Volume', pressure:'Pressure %', bigTradeShare:'Big-trade %'})[m] || m;
 }
 
-/* -------------------- rendering: brokers -------------------- */
+function renderStocks(){
+  const q = (document.getElementById('stockSearch').value||'').trim().toUpperCase();
+  const rankBy = document.getElementById('stockRankBy').value;
+  const minTrades = Number(document.getElementById('stockMinTrades').value||0);
+  const minTurn = Number(document.getElementById('stockMinTurn').value||0);
 
-/* -------------------- recommendations (buy/sell candidates) -------------------- */
+  let rows = stocks.filter(s => s.trades>=minTrades && s.amount>=minTurn);
+  if(q) rows = rows.filter(s => s.symbol.toUpperCase().includes(q));
+  rows.sort((a,b)=> rankMetric(b, rankBy) - rankMetric(a, rankBy));
+
+  const tbody = document.querySelector('#stocksTable tbody');
+  tbody.innerHTML = '';
+  for(const r of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.symbol}</b></td>
+      <td class="num">${n0(r.trades)}</td>
+      <td class="num">${n0(r.qty)}</td>
+      <td class="num">${n1(r.amount)}</td>
+      <td class="num">${n1(r.vwap)}</td>
+      <td class="num">${n1(r.high)}</td>
+      <td class="num">${n1(r.low)}</td>
+      <td class="num">${n1(pct(r.rangePct))}%</td>
+      <td class="num">${n1(pct(r.pressure))}%</td>
+      <td class="num">${n1(pct(r.bigTradeShare))}%</td>
+      <td class="num">${n0(r.ratesCount)}</td>
+      <td class="num">${n1(pct(r.modalRateShare))}%</td>
+      <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
+    `;
+    tr.addEventListener('click', ()=>{
+      selectDetailSymbol(r.symbol);
+      switchTab('detail');
+    });
+    tbody.appendChild(tr);
+  }
+
+  // Heat chart
+  const hm = document.getElementById('heatMetric').value;
+  const top = [...stocks].sort((a,b)=> heatMetric(b,hm)-heatMetric(a,hm)).slice(0,20);
+  destroyChart('heat');
+  const ctx = document.getElementById('chartHeat');
+  if(ctx){
+    charts['heat'] = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels: top.map(d=>d.symbol),
+        datasets:[{ label: metricLabel2(hm), data: top.map(d=>heatMetric(d,hm)) }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        devicePixelRatio: __DPR__,
+        plugins:{ legend:{display:true} },
+        scales:{ y:{ ticks:{ callback:(v)=> n1(v) } } }
+      }
+    });
+  }
+}
+
+/* -------------------- recommendations -------------------- */
 function zscore(values){
   const n = values.length || 1;
   const mean = values.reduce((s,v)=>s+v,0)/n;
@@ -1193,16 +1158,13 @@ function zscore(values){
   const sd = Math.sqrt(varr) || 1;
   return values.map(v => (v-mean)/sd);
 }
-
 function computeRecScores(model){
-  // base inputs
   const amounts = stocks.map(s=>s.amount);
   const press = stocks.map(s=>s.pressure);
   const bigs  = stocks.map(s=>s.bigTradeShare);
 
   const zAmt = zscore(amounts);
   const zBig = zscore(bigs);
-  // pressure is already roughly centered; still z it
   const zPr  = zscore(press);
 
   const buy = [];
@@ -1210,27 +1172,19 @@ function computeRecScores(model){
 
   for(let i=0;i<stocks.length;i++){
     const s = stocks[i];
-    let wAmt=0.45, wPr=0.40, wBig=0.15; // balanced
+    let wAmt=0.45, wPr=0.40, wBig=0.15;
     if(model==='flow'){ wAmt=0.25; wPr=0.60; wBig=0.15; }
     if(model==='liquidity'){ wAmt=0.65; wPr=0.25; wBig=0.10; }
 
-    // Buy score: liquidity + positive pressure + big trades
-    const buyScore = (wAmt*zAmt[i]) + (wPr*zPr[i]) + (wBig*zBig[i]);
-
-    // Sell score: liquidity + negative pressure (distribution) + big trades (can be sell blocks)
+    const buyScore  = (wAmt*zAmt[i]) + (wPr*zPr[i]) + (wBig*zBig[i]);
     const sellScore = (wAmt*zAmt[i]) + (wPr*(-zPr[i])) + (wBig*zBig[i]);
 
     buy.push({symbol:s.symbol, score:buyScore, amount:s.amount, pressure:s.pressure, big:s.bigTradeShare, signal:s.signal});
     sell.push({symbol:s.symbol, score:sellScore, amount:s.amount, pressure:s.pressure, big:s.bigTradeShare, signal:s.signal});
   }
 
-  // Filter: for buy, require some positive pressure; for sell, require negative pressure
-  const buyF = buy.filter(x=> x.pressure > 0);
-  const sellF = sell.filter(x=> x.pressure < 0);
-
-  buyF.sort((a,b)=> b.score-a.score);
-  sellF.sort((a,b)=> b.score-a.score);
-
+  const buyF = buy.filter(x=> x.pressure > 0).sort((a,b)=> b.score-a.score);
+  const sellF = sell.filter(x=> x.pressure < 0).sort((a,b)=> b.score-a.score);
   return {buy:buyF, sell:sellF};
 }
 
@@ -1246,31 +1200,28 @@ function renderRecommendations(){
   buyT.innerHTML = '';
   sellT.innerHTML = '';
 
-  const buyTop = buy.slice(0, topN);
-  const sellTop = sell.slice(0, topN);
-
-  for(const r of buyTop){
+  for(const r of buy.slice(0, topN)){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt1.format(r.score)}</td>
-      <td class="num">${fmt1.format(r.amount)}</td>
-      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
-      <td class="num">${fmt1.format(pct(r.big))}%</td>
+      <td class="num">${n1(r.score)}</td>
+      <td class="num">${n1(r.amount)}</td>
+      <td class="num">${n1(pct(r.pressure))}%</td>
+      <td class="num">${n1(pct(r.big))}%</td>
       <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
     `;
     tr.addEventListener('click', ()=>{ selectDetailSymbol(r.symbol); switchTab('detail'); });
     buyT.appendChild(tr);
   }
 
-  for(const r of sellTop){
+  for(const r of sell.slice(0, topN)){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt1.format(r.score)}</td>
-      <td class="num">${fmt1.format(r.amount)}</td>
-      <td class="num">${fmt1.format(pct(r.pressure))}%</td>
-      <td class="num">${fmt1.format(pct(r.big))}%</td>
+      <td class="num">${n1(r.score)}</td>
+      <td class="num">${n1(r.amount)}</td>
+      <td class="num">${n1(pct(r.pressure))}%</td>
+      <td class="num">${n1(pct(r.big))}%</td>
       <td><span class="pill ${pillClass(r.signal)}">${r.signal}</span></td>
     `;
     tr.addEventListener('click', ()=>{ selectDetailSymbol(r.symbol); switchTab('detail'); });
@@ -1278,39 +1229,86 @@ function renderRecommendations(){
   }
 }
 
+/* -------------------- brokers rendering -------------------- */
+function brokerMetric(b, m){
+  if(m==='netQty') return Math.abs(b.netQty);
+  if(m==='buyQty') return b.buyQty;
+  if(m==='sellQty') return b.sellQty;
+  if(m==='netAmt') return Math.abs(b.netAmt);
+  if(m==='symbols') return b.symbols;
+  if(m==='focus') return b.focus;
+  return Math.abs(b.netQty);
+}
+
 function renderBrokers(){
+  // charts (top brokers)
+  const topNet = [...brokers].sort((a,b)=>Math.abs(b.netQty)-Math.abs(a.netQty)).slice(0,10);
+  chartBar('chartBrokersNet', 'brokersNet', topNet.map(b=>String(b.broker)), topNet.map(b=>b.netQty), 'Net Qty');
+
+  // buy vs sell amount chart (top by turnover)
+  const topTurn = [...brokers].sort((a,b)=>(b.buyAmt+b.sellAmt)-(a.buyAmt+a.sellAmt)).slice(0,10);
+  destroyChart('brokersBuySell');
+  const ctx = document.getElementById('chartBrokersBuySell');
+  if(ctx){
+    charts['brokersBuySell'] = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels: topTurn.map(b=>String(b.broker)),
+        datasets:[
+          {label:'Buy Amount', data: topTurn.map(b=>b.buyAmt)},
+          {label:'Sell Amount', data: topTurn.map(b=>b.sellAmt)}
+        ]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        devicePixelRatio: __DPR__,
+        plugins:{ legend:{display:true} },
+        scales:{ y:{ ticks:{ callback:(v)=> n1(v) } } }
+      }
+    });
+  }
+
+  // table
   const tbody = document.querySelector('#brokersTable tbody');
   tbody.innerHTML='';
-  const symQ = (document.getElementById('brokerSymbolFilter')?.value||'').trim().toUpperCase();
 
-  // helper to create a row with the EXACT table format/columns
-  function addRow({
-    symbol, broker,
-    buyTrades, buyQty, buyAmt,
-    sellTrades, sellQty, sellAmt,
-    netQty, netAmt,
-    nSymbols, focus, tag
-  }){
+  const brokerQ = (document.getElementById('brokerSearch')?.value||'').trim();
+  const symQ = (document.getElementById('brokerSymbolSearch')?.value||'').trim().toUpperCase();
+  const rankBy = document.getElementById('brokerRankBy')?.value || 'netQty';
+
+  let bList = [...brokers];
+  if(brokerQ) bList = bList.filter(b=> String(b.broker).includes(brokerQ));
+
+  // rank brokers first (for consistent output)
+  bList.sort((a,b)=> brokerMetric(b,rankBy)-brokerMetric(a,rankBy));
+
+  function addRow(payload){
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><b>${symbol}</b></td>
-      <td>${broker}</td>
-      <td>${buyTrades}</td>
-      <td>${fmt(buyQty)}</td>
-      <td>${cr(buyAmt)}</td>
-      <td>${sellTrades}</td>
-      <td>${fmt(sellQty)}</td>
-      <td>${cr(sellAmt)}</td>
-      <td>${fmt(netQty)}</td>
-      <td>${cr(netAmt)}</td>
-      <td>${nSymbols}</td>
-      <td>${(focus===null || focus===undefined) ? '—' : pct(focus)}</td>
-      <td>${tag}</td>`;
+      <td><b>${payload.symbol}</b></td>
+      <td>${payload.broker}</td>
+      <td class="num">${n0(payload.buyTrades)}</td>
+      <td class="num">${n0(payload.buyQty)}</td>
+      <td class="num">${n1(payload.buyAmt)}</td>
+      <td class="num">${n0(payload.sellTrades)}</td>
+      <td class="num">${n0(payload.sellQty)}</td>
+      <td class="num">${n1(payload.sellAmt)}</td>
+      <td class="num">${n0(payload.netQty)}</td>
+      <td class="num">${n1(payload.netAmt)}</td>
+      <td class="num">${n0(payload.nSymbols)}</td>
+      <td class="num">${payload.focus === null || payload.focus === undefined ? '—' : (n1(pct(payload.focus)) + '%')}</td>
+      <td>${payload.tag}</td>
+    `;
+    tr.addEventListener('click', ()=>{
+      setSelectedBrokerForSymbolDetail(payload.broker);
+      openBrokerModal(payload.broker, payload.symbol || null);
+    });
     tbody.appendChild(tr);
   }
 
-  brokers.forEach(b=>{
-    // If symbol filter applied → show ONLY that symbol (but still exact format)
+  for(const b of bList){
+    // If symbol filter applied → show ONLY that symbol for each broker
     if(symQ){
       const buyTrades = b.symBuyTrades.get(symQ)||0;
       const buyQty    = b.symBuyQty.get(symQ)||0;
@@ -1323,12 +1321,14 @@ function renderBrokers(){
       const netQty = buyQty - sellQty;
       const netAmt = buyAmt - sellAmt;
 
-      // focus for this symbol inside this broker (turnover share)
       const brokerTotalTurnover = b.buyAmt + b.sellAmt;
       const symTurnover = buyAmt + sellAmt;
       const focus = brokerTotalTurnover ? (symTurnover / brokerTotalTurnover) : 0;
 
       const tag = netQty>0 ? 'Net Buyer' : (netQty<0 ? 'Net Seller' : 'Neutral');
+
+      // Skip brokers with no activity in that symbol (optional)
+      if((buyTrades + sellTrades) === 0) continue;
 
       addRow({
         symbol: symQ,
@@ -1340,15 +1340,13 @@ function renderBrokers(){
         focus,
         tag
       });
-      return;
+      continue;
     }
 
-    // NO symbol filter → show EACH AND EVERY symbol for the broker
-    // Build the union of symbols seen in buy/sell maps (safer than symAmt alone)
+    // NO symbol filter → show EACH symbol for the broker
     const symSet = new Set();
     b.symBuyAmt?.forEach((v,k)=>symSet.add(k));
     b.symSellAmt?.forEach((v,k)=>symSet.add(k));
-    // fallback (in case) include symAmt keys too
     b.symAmt?.forEach((v,k)=>symSet.add(k));
 
     const brokerTotalTurnover = b.buyAmt + b.sellAmt;
@@ -1381,11 +1379,10 @@ function renderBrokers(){
         tag
       });
     });
-  });
+  }
 }
 
-
-// -------------------- Broker -> Symbol Detail (inline) --------------------
+/* -------------------- Broker -> Symbol Detail (inline) -------------------- */
 let selectedBrokerForSymbolDetail = null;
 
 function setSelectedBrokerForSymbolDetail(brokerCode){
@@ -1393,9 +1390,6 @@ function setSelectedBrokerForSymbolDetail(brokerCode){
   const badge = document.getElementById('brokerSymbolSelected');
   if(badge) badge.textContent = `Selected broker: ${selectedBrokerForSymbolDetail}`;
   renderBrokerSymbolDetail();
-  // scroll into view for convenience
-  const tbl = document.getElementById('brokerSymbolDetailTable');
-  if(tbl) tbl.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function brokerSymRankVal(r, mode){
@@ -1429,11 +1423,11 @@ function renderBrokerSymbolDetail(){
   if(q) arr = arr.filter(r => String(r.symbol||'').toUpperCase().includes(q));
 
   arr.sort((a,b)=> brokerSymRankVal(b, rankBy) - brokerSymRankVal(a, rankBy));
-
   const shown = (topN>=9999) ? arr : arr.slice(0, topN);
 
   if(!tbody) return;
   tbody.innerHTML = '';
+
   for(const r of shown){
     const buyAmt = r.buyAmt||0, sellAmt = r.sellAmt||0, netAmt = r.netAmt||0;
     const denom = (buyAmt + sellAmt) || 0;
@@ -1447,15 +1441,15 @@ function renderBrokerSymbolDetail(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt0.format(r.buyTrades||0)}</td>
-      <td class="num">${fmt0.format(r.buyQty||0)}</td>
-      <td class="num">${fmt1.format(buyAmt)}</td>
-      <td class="num">${fmt0.format(r.sellTrades||0)}</td>
-      <td class="num">${fmt0.format(r.sellQty||0)}</td>
-      <td class="num">${fmt1.format(sellAmt)}</td>
-      <td class="num">${fmt0.format(r.netQty||0)}</td>
-      <td class="num">${fmt1.format(netAmt)}</td>
-      <td class="num">${fmt1.format(pct(netPct))}%</td>
+      <td class="num">${n0(r.buyTrades||0)}</td>
+      <td class="num">${n0(r.buyQty||0)}</td>
+      <td class="num">${n1(buyAmt)}</td>
+      <td class="num">${n0(r.sellTrades||0)}</td>
+      <td class="num">${n0(r.sellQty||0)}</td>
+      <td class="num">${n1(sellAmt)}</td>
+      <td class="num">${n0(r.netQty||0)}</td>
+      <td class="num">${n1(netAmt)}</td>
+      <td class="num">${n1(pct(netPct))}%</td>
       <td><span class="pill ${cls}">${tag}</span></td>
     `;
     tr.addEventListener('click', ()=>{
@@ -1466,22 +1460,11 @@ function renderBrokerSymbolDetail(){
   }
 }
 
-// Wire controls
 document.getElementById('brokerSymbolQuery')?.addEventListener('input', renderBrokerSymbolDetail);
 document.getElementById('brokerSymbolRankBy')?.addEventListener('change', renderBrokerSymbolDetail);
 document.getElementById('brokerSymbolTopN')?.addEventListener('change', renderBrokerSymbolDetail);
 
-function brokerMetric(b, m){
-  if(m==='netQty') return Math.abs(b.netQty);
-  if(m==='buyQty') return b.buyQty;
-  if(m==='sellQty') return b.sellQty;
-  if(m==='netAmt') return Math.abs(b.netAmt);
-  if(m==='symbols') return b.symbols;
-  if(m==='focus') return b.focus;
-  return Math.abs(b.netQty);
-}
-
-
+/* -------------------- broker modal -------------------- */
 function openBrokerModal(brokerCode, filterSymbol=null){
   const modal = document.getElementById('brokerModal');
   const title = document.getElementById('brokerModalTitle');
@@ -1489,11 +1472,7 @@ function openBrokerModal(brokerCode, filterSymbol=null){
   const sellBody = document.querySelector('#brokerSellStocksTable tbody');
 
   const m = brokerSymAgg.get(String(brokerCode));
-  if(!m || m.size===0){
-    // ✅ Do NOT open the modal if there is no data (keeps other sections clickable)
-    // Optionally you can show a small hint in the inline broker→symbol table instead.
-    return;
-  }
+  if(!m || m.size===0) return;
 
   let arr = Array.from(m.entries()).map(([symbol, o])=>({symbol, ...o}));
 
@@ -1518,9 +1497,9 @@ function openBrokerModal(brokerCode, filterSymbol=null){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt0.format(r.buyQty)}</td>
-      <td class="num">${fmt1.format(r.buyAmt)}</td>
-      <td class="num">${fmt0.format(r.netQty)}</td>
+      <td class="num">${n0(r.buyQty)}</td>
+      <td class="num">${n1(r.buyAmt)}</td>
+      <td class="num">${n0(r.netQty)}</td>
     `;
     tr.addEventListener('click', ()=>{
       selectDetailSymbol(r.symbol);
@@ -1535,9 +1514,9 @@ function openBrokerModal(brokerCode, filterSymbol=null){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><b>${r.symbol}</b></td>
-      <td class="num">${fmt0.format(r.sellQty)}</td>
-      <td class="num">${fmt1.format(r.sellAmt)}</td>
-      <td class="num">${fmt0.format(r.netQty)}</td>
+      <td class="num">${n0(r.sellQty)}</td>
+      <td class="num">${n1(r.sellAmt)}</td>
+      <td class="num">${n0(r.netQty)}</td>
     `;
     tr.addEventListener('click', ()=>{
       selectDetailSymbol(r.symbol);
@@ -1550,19 +1529,15 @@ function openBrokerModal(brokerCode, filterSymbol=null){
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
 }
-
 function closeBrokerModal(){
   const modal = document.getElementById('brokerModal');
   modal.classList.add('hidden');
   modal.style.display = 'none';
 }
-
-// Close modal events
 document.getElementById('brokerModalClose')?.addEventListener('click', closeBrokerModal);
 document.getElementById('brokerModal')?.addEventListener('click', (e)=>{
   if(e.target && e.target.id==='brokerModal') closeBrokerModal();
 });
-
 
 /* -------------------- rendering: stock detail -------------------- */
 function renderDetailInit(){
@@ -1571,16 +1546,13 @@ function renderDetailInit(){
   sel.innerHTML='';
   if(dl) dl.innerHTML='';
 
-  // sort by turnover so dropdown stays meaningful
   const sorted = [...stocks].sort((a,b)=>b.amount-a.amount);
-
   for(const s of sorted){
     const opt = document.createElement('option');
     opt.value = s.symbol;
-    opt.textContent = `${s.symbol} (turnover ${fmt1.format(s.amount)})`;
+    opt.textContent = `${s.symbol} (turnover ${n1(s.amount)})`;
     sel.appendChild(opt);
 
-    // datalist suggestions (used by the search input)
     if(dl){
       const o2 = document.createElement('option');
       o2.value = s.symbol;
@@ -1588,7 +1560,6 @@ function renderDetailInit(){
     }
   }
 
-  // default: pick a RANDOM symbol from available data (not always the first)
   if(sorted.length){
     const pick = sorted[Math.floor(Math.random()*sorted.length)].symbol;
     selectDetailSymbol(pick);
@@ -1596,7 +1567,6 @@ function renderDetailInit(){
     if(inp) inp.value = pick;
   }
 }
-
 function selectDetailSymbol(symbol){
   const sel = document.getElementById('detailSymbol');
   const inp = document.getElementById('detailSymbolSearch');
@@ -1610,13 +1580,11 @@ function renderDetail(symbol){
   if(!obj) return;
   const rows = obj.rows;
 
-  // Big cutoff for this view
   const pctSel = Number(document.getElementById('detailBigPct').value || 0.99);
   const amts = rows.map(r=>r.amt).sort((a,b)=>a-b);
   const idx = Math.floor(amts.length * pctSel);
   const cut = amts.length ? amts[Math.min(amts.length-1, idx)] : Infinity;
 
-  // Volume-by-price
   const volByPrice = new Map();
   const buyers = new Map();
   const sellers = new Map();
@@ -1633,7 +1601,6 @@ function renderDetail(symbol){
   }
 
   const priceLevels = Array.from(volByPrice.entries()).sort((a,b)=>a[0]-b[0]);
-  // show up to 25 bins: if too many levels, bucketize by rounding to 0.1
   let labels = priceLevels.map(x=>String(x[0]));
   let vals = priceLevels.map(x=>x[1]);
   if(labels.length > 25){
@@ -1648,13 +1615,11 @@ function renderDetail(symbol){
   }
   chartBar('chartVolByPrice', 'volByPrice', labels, vals, 'Qty at price');
 
-  // Top buyers/sellers
   const topBuy = Array.from(buyers.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const topSell = Array.from(sellers.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
   chartBar('chartTopBuyers', 'topBuyers', topBuy.map(x=>String(x[0])), topBuy.map(x=>x[1]), 'Buy Qty');
   chartBar('chartTopSellers', 'topSellers', topSell.map(x=>String(x[0])), topSell.map(x=>x[1]), 'Sell Qty');
 
-  // Net by broker (top abs)
   const topNet = Array.from(net.entries()).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,12);
   chartBar('chartNetByBroker', 'netByBroker', topNet.map(x=>String(x[0])), topNet.map(x=>x[1]), 'Net Qty');
 
@@ -1666,16 +1631,19 @@ function renderDetail(symbol){
   const step = (max-min)/bins || 1;
   const h = new Array(bins).fill(0);
   for(const v of tradeSizes){
-    const idx = Math.min(bins-1, Math.floor((v-min)/step));
-    h[idx] += 1;
+    const id = Math.min(bins-1, Math.floor((v-min)/step));
+    h[id] += 1;
   }
-  const hLabels = h.map((_,i)=> `${fmt0.format(min + i*step)}–${fmt0.format(min + (i+1)*step)}`);
+  const hLabels = h.map((_,i)=> `${n0(min + i*step)}–${n0(min + (i+1)*step)}`);
   destroyChart('tradeSize');
-  charts['tradeSize'] = new Chart(document.getElementById('chartTradeSize'), {
-    type:'bar',
-    data:{ labels: hLabels, datasets:[{label:'#Trades', data:h}] },
-    options:{ responsive:true, plugins:{ legend:{display:true} }, scales:{ y:{ ticks:{ callback:(v)=> fmt0.format(v) } } } }
-  });
+  const ctx = document.getElementById('chartTradeSize');
+  if(ctx){
+    charts['tradeSize'] = new Chart(ctx, {
+      type:'bar',
+      data:{ labels: hLabels, datasets:[{label:'#Trades', data:h}] },
+      options:{ responsive:true, maintainAspectRatio:false, devicePixelRatio: __DPR__, plugins:{ legend:{display:true} }, scales:{ y:{ ticks:{ callback:(v)=> n0(v) } } } }
+    });
+  }
 
   // Big trades table
   const big = rows.filter(r=>r.amt>=cut).sort((a,b)=>b.amt-a.amt).slice(0,25);
@@ -1687,14 +1655,14 @@ function renderDetail(symbol){
       <td>${r.txn}</td>
       <td>${r.buyer}</td>
       <td>${r.seller}</td>
-      <td class="num">${fmt0.format(r.qty)}</td>
-      <td class="num">${fmt1.format(r.rate)}</td>
-      <td class="num">${fmt1.format(r.amt)}</td>
+      <td class="num">${n0(r.qty)}</td>
+      <td class="num">${n1(r.rate)}</td>
+      <td class="num">${n1(r.amt)}</td>
     `;
     tbody.appendChild(tr);
   }
 
-  // Microstructure flags (heuristics)
+  // Microstructure flags
   const distinctRates = new Set(rows.map(r=>r.rate)).size;
   const rateQty = new Map();
   for(const r of rows) rateQty.set(r.rate, (rateQty.get(r.rate)||0)+r.qty);
@@ -1704,16 +1672,16 @@ function renderDetail(symbol){
   const avgTradeQty = totalQty ? totalQty/rows.length : 0;
 
   const flags = [];
-  if(modalShare >= 0.45 && distinctRates <= 3) flags.push(`⚠️ <b>Price concentration</b>: ${fmt1.format(pct(modalShare))}% volume at one price (${modalRate}).`);
+  if(modalShare >= 0.45 && distinctRates <= 3) flags.push(`⚠️ <b>Price concentration</b>: ${n1(pct(modalShare))}% volume at one price (${modalRate}).`);
   if(distinctRates >= 12) flags.push(`✅ <b>Organic price discovery</b>: many price levels (${distinctRates}).`);
   const smallTrades = rows.filter(r=>r.qty <= Math.max(5, avgTradeQty*0.15)).length;
-  if(rows.length && smallTrades/rows.length >= 0.55) flags.push(`⚠️ <b>Many small trades</b>: ${fmt1.format(pct(smallTrades/rows.length))}% trades are small (possible tape noise).`);
-  if(big.length >= 3) flags.push(`✅ <b>Big trades present</b>: ${big.length} big trades (>= ${fmt1.format(cut)} amount).`);
+  if(rows.length && smallTrades/rows.length >= 0.55) flags.push(`⚠️ <b>Many small trades</b>: ${n1(pct(smallTrades/rows.length))}% trades are small (possible tape noise).`);
+  if(big.length >= 3) flags.push(`✅ <b>Big trades present</b>: ${big.length} big trades (>= ${n1(cut)} amount).`);
 
   document.getElementById('microFlags').innerHTML = flags.length ? flags.map(x=>`• ${x}`).join('<br/>') : 'No strong microstructure flags based on current heuristics.';
 }
 
-/* -------------------- events -------------------- */
+/* -------------------- tabs -------------------- */
 function switchTab(name){
   document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.tab===name));
   document.getElementById('tab-market').classList.toggle('hidden', name!=='market');
@@ -1721,13 +1689,13 @@ function switchTab(name){
   document.getElementById('tab-brokers').classList.toggle('hidden', name!=='brokers');
   document.getElementById('tab-detail').classList.toggle('hidden', name!=='detail');
 }
-
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=> switchTab(t.dataset.tab));
 });
 
-document.getElementById('marketMetric').addEventListener('change', ()=> renderMarket());
-document.getElementById('topNMarket').addEventListener('change', ()=> renderMarket());
+/* -------------------- events -------------------- */
+document.getElementById('marketMetric').addEventListener('change', renderMarket);
+document.getElementById('topNMarket').addEventListener('change', renderMarket);
 document.getElementById('bigTradePct').addEventListener('change', ()=>{
   bigTradeThreshold = Number(document.getElementById('bigTradePct').value || 0.99);
   computeAll();
@@ -1742,22 +1710,19 @@ document.getElementById('heatMetric').addEventListener('change', renderStocks);
 document.getElementById('recModel')?.addEventListener('change', renderRecommendations);
 document.getElementById('recTopN')?.addEventListener('change', renderRecommendations);
 
-
 document.getElementById('brokerSearch').addEventListener('input', renderBrokers);
-
 document.getElementById('brokerSymbolSearch')?.addEventListener('input', renderBrokers);
 document.getElementById('brokerRankBy').addEventListener('change', renderBrokers);
 
 document.getElementById('detailSymbolSearch')?.addEventListener('input', (e)=>{
   const v = (e.target.value||'').trim().toUpperCase();
   if(!v) return;
-  // If symbol exists, jump to it
   if(stockDetail.has(v)) selectDetailSymbol(v);
 });
 document.getElementById('detailSymbol').addEventListener('change', (e)=> renderDetail(e.target.value));
 document.getElementById('detailBigPct').addEventListener('change', ()=> renderDetail(document.getElementById('detailSymbol').value));
 
-/* Export buttons */
+/* -------------------- Export buttons -------------------- */
 document.getElementById('btnExportStocks').addEventListener('click', ()=>{
   const header = ['Symbol','Trades','Qty','Turnover','VWAP','High','Low','RangePct','PressurePct','BigTradePct','#Rates','ModalPct','Signal'];
   const lines = [header.join(',')];
@@ -1769,7 +1734,6 @@ document.getElementById('btnExportStocks').addEventListener('click', ()=>{
   }
   downloadText('stocks_summary.csv', lines.join('\n'));
 });
-
 document.getElementById('btnExportBrokers').addEventListener('click', ()=>{
   const header = ['Broker','BuyTrades','BuyQty','BuyAmount','SellTrades','SellQty','SellAmount','NetQty','NetAmount','Symbols','Focus','Tag'];
   const lines = [header.join(',')];
@@ -1783,7 +1747,7 @@ document.getElementById('btnExportBrokers').addEventListener('click', ()=>{
   downloadText('brokers_summary.csv', lines.join('\n'));
 });
 
-/* File input / drop */
+/* -------------------- Optional local CSV input (hidden in auto mode) -------------------- */
 const drop = document.getElementById('dropZone');
 const input = document.getElementById('fileInput');
 drop.addEventListener('click', ()=> input.click());
@@ -1812,7 +1776,7 @@ function loadFiles(fileList){
         const rows = (res.data || []).map(r=> ({...r, __source: file.name}));
         const required = ['Symbol','Buyer','Seller','Quantity','Rate','Amount'];
         for(const k of required){
-          if(!(k in rows[0])){
+          if(!rows[0] || !(k in rows[0])){
             alert('Missing column: ' + k + '\nExpected columns: Transact No., Symbol, Buyer, Seller, Quantity, Rate, Amount');
             return;
           }
@@ -1820,7 +1784,6 @@ function loadFiles(fileList){
         rawRows.push(...rows.map(normalizeRow));
         done += 1;
         if(done === files.length){
-          // Default big trade threshold uses selector in Market tab
           bigTradeThreshold = Number(document.getElementById('bigTradePct').value || 0.99);
           computeAll();
         }
@@ -1829,53 +1792,52 @@ function loadFiles(fileList){
   });
 }
 
-
 /* -------------------- multi-day loader for GitHub Pages -------------------- */
 /*
-Expected structure (GitHub Pages):
+Expected structure:
 docs/
   index.html
   data/
     index.json        -> list of available daily files (date + file)
     floorsheet_YYYY-MM-DD.csv
-    ...
 index.json format:
 {
   "files":[ {"date":"2026-01-11","file":"data/floorsheet_2026-01-11.csv"}, ... ],
   "latest":"2026-01-11"
 }
 */
-
 async function fetchIndex(){
   const res = await fetch("data/index.json", {cache:"no-store"});
   if(!res.ok) throw new Error("index.json not found (data/index.json).");
   return await res.json();
 }
 
-function parseDate(s){ return new Date(s + "T00:00:00"); }
-function fmtDate(d){
-  const y=d.getFullYear();
-  const m=String(d.getMonth()+1).padStart(2,'0');
-  const da=String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${da}`;
+function updatePeriodBadge(label){
+  const el = document.getElementById('periodBadge');
+  if(!el) return;
+  el.textContent = "Period: " + label;
 }
 
 function chooseFiles(indexObj){
   const files = indexObj.files || [];
   if(!files.length) return [];
 
-  // ✅ Today-only mode: always load ONLY the latest available day
-  const latest = files[files.length-1];
-  // Update badge
-  const badge = document.getElementById('periodBadge');
-  if(badge){
-    badge.textContent = `Period: 1D (${indexObj.latest || latest.date})`;
-    badge.className = 'pill good';
+  // selected period from UI (fallback auto=1)
+  const sel = document.getElementById('periodSelect');
+  let p = sel ? sel.value : (window.__NEPSE_PERIOD__ || 'auto');
+  if(p === 'auto') p = '1';
+
+  if(p === 'all'){
+    updatePeriodBadge(`All Available (${files[0].date} → ${files[files.length-1].date})`);
+    return files;
   }
-  // Keep the selector UI in sync (optional)
-  const ps = document.getElementById('periodSelect');
-  if(ps) ps.value = '1';
-  return [latest];
+
+  const n = Number(p) || 1;
+  const chosen = files.slice(Math.max(0, files.length - n));
+  const start = chosen[0]?.date;
+  const end = chosen[chosen.length-1]?.date;
+  updatePeriodBadge(`${n}D (${start} → ${end})`);
+  return chosen;
 }
 
 async function loadCsvUrl(url){
@@ -1895,17 +1857,10 @@ async function loadCsvUrl(url){
 
 async function loadFromIndex(){
   try{
-    const hint = document.getElementById('multiHint');
-    if(hint) hint.textContent = "Loading index.json…";
     const idxObj = await fetchIndex();
     const chosen = chooseFiles(idxObj);
+    if(!chosen.length) return;
 
-    if(!chosen.length){
-      if(hint) hint.textContent = "No files selected (check timeframe / date range).";
-      return;
-    }
-
-    if(hint) hint.textContent = `Loading ${chosen.length} day(s)…`;
     const all = [];
     for(const f of chosen){
       const rows = await loadCsvUrl(f.file);
@@ -1914,113 +1869,12 @@ async function loadFromIndex(){
     rawRows = all;
     bigTradeThreshold = Number(document.getElementById('bigTradePct')?.value || 0.99);
     computeAll();
-
-    if(hint){
-      const start = chosen[0].date;
-      const end = chosen[chosen.length-1].date;
-      hint.textContent = `Loaded ${chosen.length} day(s): ${start} → ${end} (combined rows: ${fmt0.format(rawRows.length)})`;
-    }
   }catch(e){
     console.log(e);
-    const hint = document.getElementById('multiHint');
-    if(hint){
-      hint.innerHTML = `Could not auto-load multi-day data. <b>Fix:</b> create <code>docs/data/index.json</code> in your repo (GitHub Pages).<br/>Error: ${String(e.message||e)}`;
-    }
+    updatePeriodBadge("Auto (index.json missing)");
+    // optional: you can alert or show a hint div if you add one
   }
 }
-
-// Hook controls
-document.getElementById('btnReloadIndex')?.addEventListener('click', loadFromIndex);
-document.getElementById('tfSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); initPeriodControls();
-  loadFromIndex(); });
-document.getElementById('modeSelect')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel());
-  const mode = document.getElementById('modeSelect').value;
-  const show = (mode==='range');
-  document.getElementById('dateFrom').style.display = show ? 'inline-block':'none';
-  document.getElementById('dateTo').style.display = show ? 'inline-block':'none';
-
-/* -------------------- visible selected period badge -------------------- */
-function updatePeriodBadge(label){
-  const el = document.getElementById('periodBadge');
-  if(!el) return;
-  el.textContent = "Period: " + label;
-}
-
-function currentPeriodLabel(){
-  const tf = document.getElementById('tfSelect')?.value;
-  const mode = document.getElementById('modeSelect')?.value;
-  if(mode === 'range'){
-    const f = document.getElementById('dateFrom')?.value;
-    const t = document.getElementById('dateTo')?.value;
-    if(f && t) return `${f} → ${t}`;
-    return 'Custom range';
-  }
-  if(tf === '1') return '1 Day';
-  if(tf === '7') return '7 Days';
-  if(tf === '15') return '15 Days';
-  if(tf === '30') return '1 Month';
-  if(tf === '90') return '3 Months';
-  if(tf === '180') return '6 Months';
-  if(tf === '365') return '1 Year';
-  if(tf === 'all') return 'All Available';
-  return 'Auto';
-}
-
-  updatePeriodBadge(currentPeriodLabel());
-  loadFromIndex();
-});
-document.getElementById('dateFrom')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
-document.getElementById('dateTo')?.addEventListener('change', ()=>{ updatePeriodBadge(currentPeriodLabel()); loadFromIndex(); });
-
-// Hide date inputs initially if rolling mode
-(function(){
-  const mode = document.getElementById('modeSelect')?.value || 'rolling';
-  const show = (mode==='range');
-  const df = document.getElementById('dateFrom');
-  const dt = document.getElementById('dateTo');
-  if(df) df.style.display = show ? 'inline-block':'none';
-  if(dt) dt.style.display = show ? 'inline-block':'none';
-})();
-
-
-/* default view without data */
-(function init(){
-  document.getElementById('kpiTurnoverSub').textContent = 'Load a CSV to compute';
-  document.getElementById('kpiVolumeSub').textContent = 'Load a CSV to compute';
-  document.getElementById('kpiTradesSub').textContent = 'Load a CSV to compute';
-  document.getElementById('kpiLiquiditySub').textContent = 'Load a CSV to compute';
-  // Attempt auto multi-day load (GitHub Pages)
-
-/* -------------------- visible selected period badge -------------------- */
-function updatePeriodBadge(label){
-  const el = document.getElementById('periodBadge');
-  if(!el) return;
-  el.textContent = "Period: " + label;
-}
-
-function currentPeriodLabel(){
-  const tf = document.getElementById('tfSelect')?.value;
-  const mode = document.getElementById('modeSelect')?.value;
-  if(mode === 'range'){
-    const f = document.getElementById('dateFrom')?.value;
-    const t = document.getElementById('dateTo')?.value;
-    if(f && t) return `${f} → ${t}`;
-    return 'Custom range';
-  }
-  if(tf === '1') return '1 Day';
-  if(tf === '7') return '7 Days';
-  if(tf === '15') return '15 Days';
-  if(tf === '30') return '1 Month';
-  if(tf === '90') return '3 Months';
-  if(tf === '180') return '6 Months';
-  if(tf === '365') return '1 Year';
-  if(tf === 'all') return 'All Available';
-  return 'Auto';
-}
-
-  updatePeriodBadge(currentPeriodLabel());
-  loadFromIndex();
-})();
 
 /* -------------------- Period controls wiring -------------------- */
 function setActivePeriodUI(val){
@@ -2030,41 +1884,34 @@ function setActivePeriodUI(val){
     b.classList.toggle('active', b.dataset.v === val);
   });
 }
-function periodLabelFromVal(v){
-  if(v==='1') return '1 Day';
-  if(v==='7') return '7 Days';
-  if(v==='15') return '15 Days';
-  if(v==='30') return '1 Month';
-  if(v==='90') return '3 Months';
-  if(v==='180') return '6 Months';
-  if(v==='365') return '1 Year';
-  if(v==='all') return 'All Available';
-  return 'Auto';
-}
 function applyPeriod(val){
-  const tf = document.getElementById('tfSelect');
-  if(tf){
-    tf.value = val;
-    if(typeof updatePeriodBadge === 'function'){ updatePeriodBadge(currentPeriodLabel()); }
-    tf.dispatchEvent(new Event('change'));
-  }else{
-    window.__NEPSE_PERIOD__ = val;
-    if(typeof updatePeriodBadge === 'function'){ updatePeriodBadge(periodLabelFromVal(val)); }
-    if(typeof loadFromIndex === 'function'){ loadFromIndex(); }
-  }
+  window.__NEPSE_PERIOD__ = val;
   setActivePeriodUI(val);
+  loadFromIndex();
 }
 function initPeriodControls(){
   const sel = document.getElementById('periodSelect');
-  if(sel){ sel.addEventListener('change', ()=> applyPeriod(sel.value)); }
+  if(sel){
+    sel.addEventListener('change', ()=> applyPeriod(sel.value));
+  }
   document.querySelectorAll('#periodControls .pbtn').forEach(btn=>{
     btn.addEventListener('click', ()=> applyPeriod(btn.dataset.v));
   });
-  const tf = document.getElementById('tfSelect');
-  const initial = tf ? (tf.value || 'auto') : 'auto';
+  const initial = (document.getElementById('periodSelect')?.value) || 'auto';
   setActivePeriodUI(initial);
 }
 
+/* -------------------- init -------------------- */
+(function init(){
+  document.getElementById('kpiTurnoverSub').textContent = 'Loading…';
+  document.getElementById('kpiVolumeSub').textContent = 'Loading…';
+  document.getElementById('kpiTradesSub').textContent = 'Loading…';
+  document.getElementById('kpiLiquiditySub').textContent = 'Loading…';
+
+  initPeriodControls();
+  loadFromIndex();
+})();
 </script>
+
 </body>
 </html>
