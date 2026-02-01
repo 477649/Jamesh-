@@ -16,8 +16,9 @@ from openpyxl.utils import get_column_letter
 DATA_DIR = "outputs/sharesansar"                  # INPUT daily share price CSVs
 SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -> Sector/Company)
 OUT_DIR  = "outputs/PriceAction"
-OUT_PATH = os.path.join(OUT_DIR, "nepse_signals.xlsx")
 LATEST_FILES_TO_LOAD = 60
+
+TOP_CIRCUIT_N = 25  # how many to show in circuit sheets
 
 
 # =========================
@@ -134,7 +135,8 @@ def add_features(g):
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
 
-    for n in [7, 10, 15, 20, 30]:
+    # ✅ Returns include RET1/2/4
+    for n in [1, 2, 4, 7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
@@ -362,7 +364,7 @@ def autosize(ws, min_w=10, max_w=55):
         ws.column_dimensions[letter].width = max(min_w, min(max_w, mx + 2))
 
 
-def write_table(ws, df, name):
+def write_table(ws, df, name, header_color="1F4E79"):
     if df.empty:
         df = pd.DataFrame([["No data"]], columns=["Info"])
 
@@ -376,7 +378,7 @@ def write_table(ws, df, name):
     tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
     ws.add_table(tab)
 
-    fill = PatternFill("solid", fgColor="1F4E79")
+    fill = PatternFill("solid", fgColor=header_color)
     font = Font(color="FFFFFF", bold=True)
     for c in ws[1]:
         c.fill = fill
@@ -413,6 +415,19 @@ def number_format(ws, mapping):
                 ws.cell(row=r, column=idx).number_format = fmt
 
 
+def apply_row_fill_by_value(ws, col_name, match_value, fill_hex):
+    header = [c.value for c in ws[1]]
+    if col_name not in header:
+        return
+    idx = header.index(col_name) + 1
+    fill = PatternFill("solid", fgColor=fill_hex)
+    for r in range(2, ws.max_row + 1):
+        v = ws.cell(row=r, column=idx).value
+        if v == match_value:
+            for c in range(1, ws.max_column + 1):
+                ws.cell(row=r, column=c).fill = fill
+
+
 # =========================
 # OUTPUT COLUMNS
 # =========================
@@ -421,6 +436,7 @@ FINAL_COLS = [
     "Stock Signal","Sector Signal","BuyStrength","SellStrength","Bias",
     "EarlyScore","Confidence","Confidence_Advanced","RankScore",
     "Close","Volume",
+    "RET1_%","RET2_%","RET4_%",
     "RET7_%","RET10_%","RET15_%","RET20_%","RET30_%",
     "MA7","MA10","MA15","MA30",
     "HH7","HH15","LL7","LL15",
@@ -439,10 +455,6 @@ FINAL_COLS = [
 # BUILD SHEET DF
 # =========================
 def build_sheet_df(data, sector_df, mode="7D"):
-    """
-    mode="7D": uses 7-day stats for Close_Z20/Volume_Z20/Slope20/R2_20/StretchFlag
-    mode="15D": uses 20-day stats for Close_Z20/Volume_Z20/Slope20/R2_20/StretchFlag
-    """
     rows = []
 
     for sym, g in data.groupby("Symbol"):
@@ -451,7 +463,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         g = add_features(g)
 
-        # window rule
         if mode == "7D":
             z_win = 7
             slope_win = 7
@@ -501,7 +512,7 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "Symbol": sym,
 
             "Stock Signal": last["Stock Signal"],
-            "Sector Signal": None,  # fill later
+            "Sector Signal": None,
             "BuyStrength": last["BuyStrength"],
             "SellStrength": last["SellStrength"],
             "Bias": last["Bias"],
@@ -509,16 +520,20 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "EarlyScore": es,
             "Confidence": float(last["Confidence"]) if pd.notna(last["Confidence"]) else None,
             "Confidence_Advanced": conf_adv,
-            "RankScore": None,  # fill later
+            "RankScore": None,
 
             "Close": float(last["Close"]),
             "Volume": float(last["Volume"]),
 
-            "RET7_%": float(last["RET7"]) if pd.notna(last["RET7"]) else None,
-            "RET10_%": float(last["RET10"]) if pd.notna(last["RET10"]) else None,
-            "RET15_%": float(last["RET15"]) if pd.notna(last["RET15"]) else None,
-            "RET20_%": float(last["RET20"]) if pd.notna(last["RET20"]) else None,
-            "RET30_%": float(last["RET30"]) if pd.notna(last["RET30"]) else None,
+            "RET1_%": float(last["RET1"]) if pd.notna(last.get("RET1")) else None,
+            "RET2_%": float(last["RET2"]) if pd.notna(last.get("RET2")) else None,
+            "RET4_%": float(last["RET4"]) if pd.notna(last.get("RET4")) else None,
+
+            "RET7_%": float(last["RET7"]) if pd.notna(last.get("RET7")) else None,
+            "RET10_%": float(last["RET10"]) if pd.notna(last.get("RET10")) else None,
+            "RET15_%": float(last["RET15"]) if pd.notna(last.get("RET15")) else None,
+            "RET20_%": float(last["RET20"]) if pd.notna(last.get("RET20")) else None,
+            "RET30_%": float(last["RET30"]) if pd.notna(last.get("RET30")) else None,
 
             "MA7": float(last["MA7"]) if pd.notna(last["MA7"]) else None,
             "MA10": float(last["MA10"]) if pd.notna(last["MA10"]) else None,
@@ -590,22 +605,118 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
+# CIRCUIT WATCHLIST (TOMORROW)
+# =========================
+def build_circuit_watchlist(df):
+    """
+    Uses df (recommended df7 for short-term) and creates:
+    - UpperCircuitPrice / LowerCircuitPrice (based on today's close)
+    - UpCircuitScore / DownCircuitScore
+    - CircuitPick (UP/DOWN)
+    """
+    if df.empty:
+        return df.copy(), df.copy()
+
+    x = df.copy()
+
+    # circuit prices for tomorrow
+    x["UpperCircuitPrice"] = x["Close"] * 1.10
+    x["LowerCircuitPrice"] = x["Close"] * 0.90
+
+    # helper safe values
+    ret1 = x["RET1_%"].fillna(0)
+    ret2 = x["RET2_%"].fillna(0)
+    ret4 = x["RET4_%"].fillna(0)
+    vol = x["Volume"].fillna(0)
+    vma7 = x["VMA7"].replace(0, np.nan).fillna(np.nan)
+    vol_ratio7 = (vol / (vma7 + 1e-12)).replace([np.inf, -np.inf], 0).fillna(0)
+
+    # proximity to breakout
+    hh7 = x["HH7"].replace(0, np.nan)
+    hh15 = x["HH15"].replace(0, np.nan)
+    near_hh7 = ((x["Close"] / (hh7 + 1e-12)) >= 0.98).fillna(False)
+    near_hh15 = ((x["Close"] / (hh15 + 1e-12)) >= 0.98).fillna(False)
+
+    # ---- UP SCORE (0-100 approx) ----
+    up_score = (
+        18 * (ret1 >= 5).astype(int) +
+        18 * (ret2 >= 7).astype(int) +
+        12 * (ret4 >= 10).astype(int) +
+        18 * (vol_ratio7 >= 1.5).astype(int) +
+        12 * (near_hh7 | near_hh15).astype(int) +
+        10 * (x["UpperWickPct"].fillna(1.0) <= 0.30).astype(int) +
+        12 * (x["Sector_RET10"].fillna(-1) > 0).astype(int)
+    ).clip(0, 100)
+
+    # ---- DOWN SCORE (0-100 approx) ----
+    down_score = (
+        18 * (ret1 <= -5).astype(int) +
+        18 * (ret2 <= -7).astype(int) +
+        12 * (ret4 <= -10).astype(int) +
+        16 * ((x["MA7"].fillna(0) < x["MA10"].fillna(0))).astype(int) +
+        12 * (x["UpperWickPct"].fillna(0) >= 0.45).astype(int) +
+        12 * (x["FalseBreakoutFlag"].fillna(False)).astype(int) +
+        12 * (x["TrendHealth"].fillna("") == "DOWN").astype(int)
+    ).clip(0, 100)
+
+    x["UpCircuitScore"] = up_score.astype(int)
+    x["DownCircuitScore"] = down_score.astype(int)
+
+    # pick label
+    x["CircuitPick"] = ""
+    x.loc[(x["UpCircuitScore"] >= 60) & (x["UpCircuitScore"] > x["DownCircuitScore"]), "CircuitPick"] = "UP"
+    x.loc[(x["DownCircuitScore"] >= 60) & (x["DownCircuitScore"] > x["UpCircuitScore"]), "CircuitPick"] = "DOWN"
+
+    # prepare UP and DOWN sheets
+    up_cols = [
+        "Date","Symbol","Sector","Company","Close",
+        "UpperCircuitPrice","UpCircuitScore",
+        "RET1_%","RET2_%","RET4_%",
+        "Volume","VMA7","UpperWickPct","Sector_RET10",
+        "Stock Signal","BuyStrength","Bias","Reason",
+        "CircuitPick"
+    ]
+    down_cols = [
+        "Date","Symbol","Sector","Company","Close",
+        "LowerCircuitPrice","DownCircuitScore",
+        "RET1_%","RET2_%","RET4_%",
+        "Volume","VMA7","UpperWickPct","Sector_RET10",
+        "Stock Signal","SellStrength","Bias","Reason",
+        "CircuitPick"
+    ]
+
+    up_df = x.sort_values(["UpCircuitScore","RankScore","EarlyScore"], ascending=[False, False, False])
+    up_df = up_df[up_cols].head(TOP_CIRCUIT_N)
+
+    down_df = x.sort_values(["DownCircuitScore","RankScore","EarlyScore"], ascending=[False, False, False])
+    down_df = down_df[down_cols].head(TOP_CIRCUIT_N)
+
+    return up_df, down_df
+
+
+# =========================
 # MAIN
 # =========================
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     data = load_latest_files(DATA_DIR, latest_n=LATEST_FILES_TO_LOAD)
+    latest_dt = pd.to_datetime(data["Date"].max()).date()
+    out_path = os.path.join(OUT_DIR, f"nepse_signals_{latest_dt}.xlsx")
+
     sector_df = load_sector_master(SECTOR_FILE)
 
-    # Main sheets only
+    # signals
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
 
-    # ---------- WRITE EXCEL ----------
+    # circuit sheets (use df7 for short-term)
+    up_watch, down_watch = build_circuit_watchlist(df7)
+
     wb = Workbook()
 
     fmt_map = {
+        "RET1_%":"0.00","RET2_%":"0.00","RET4_%":"0.00",
         "RET7_%":"0.00","RET10_%":"0.00","RET15_%":"0.00","RET20_%":"0.00","RET30_%":"0.00",
         "Confidence":"0.00","Confidence_Advanced":"0.00",
         "UpperWickPct":"0.00",
@@ -614,19 +725,23 @@ def main():
         "Slope20":"0.00","R2_20":"0.00",
         "RankScore":"0.00",
         "Sector_RET10":"0.00",
-        "FalseBreakoutScore":"0.00",
+        "FalseBreakoutScore":"0",
         "Close":"#,##0.00",
         "Volume":"#,##0",
         "MA7":"#,##0.00","MA10":"#,##0.00","MA15":"#,##0.00","MA30":"#,##0.00",
         "HH7":"#,##0.00","HH15":"#,##0.00","LL7":"#,##0.00","LL15":"#,##0.00",
         "VMA7":"#,##0","VMA15":"#,##0",
         "EarlyScore":"0",
+        "UpperCircuitPrice":"#,##0.00",
+        "LowerCircuitPrice":"#,##0.00",
+        "UpCircuitScore":"0",
+        "DownCircuitScore":"0",
     }
 
     # Sheet 1: Signals_7D
     wb.active.title = "Signals_7D"
     ws1 = wb["Signals_7D"]
-    write_table(ws1, df7, "Signals7DTbl")
+    write_table(ws1, df7, "Signals7DTbl", header_color="1F4E79")
     number_format(ws1, fmt_map)
     color_scale(ws1, "RankScore")
     color_scale(ws1, "Confidence_Advanced")
@@ -635,15 +750,35 @@ def main():
 
     # Sheet 2: Signals_15D
     ws2 = wb.create_sheet("Signals_15D")
-    write_table(ws2, df15, "Signals15DTbl")
+    write_table(ws2, df15, "Signals15DTbl", header_color="1F4E79")
     number_format(ws2, fmt_map)
     color_scale(ws2, "RankScore")
     color_scale(ws2, "Confidence_Advanced")
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
-    wb.save(OUT_PATH)
-    print(f"✅ Excel created with 2 sheets (Signals only): {OUT_PATH}")
+    # Sheet 3: Circuit_UP_Tomorrow (GREEN header)
+    ws3 = wb.create_sheet("Circuit_UP_Tomorrow")
+    write_table(ws3, up_watch, "CircuitUpTbl", header_color="2E7D32")  # green
+    number_format(ws3, fmt_map)
+    color_scale(ws3, "UpCircuitScore")
+    color_scale(ws3, "RET1_%")
+    color_scale(ws3, "RET2_%")
+    color_scale(ws3, "RET4_%")
+    apply_row_fill_by_value(ws3, "CircuitPick", "UP", "E8F5E9")  # light green rows
+
+    # Sheet 4: Circuit_DOWN_Tomorrow (RED header)
+    ws4 = wb.create_sheet("Circuit_DOWN_Tomorrow")
+    write_table(ws4, down_watch, "CircuitDownTbl", header_color="B71C1C")  # red
+    number_format(ws4, fmt_map)
+    color_scale(ws4, "DownCircuitScore")
+    color_scale(ws4, "RET1_%")
+    color_scale(ws4, "RET2_%")
+    color_scale(ws4, "RET4_%")
+    apply_row_fill_by_value(ws4, "CircuitPick", "DOWN", "FFEBEE")  # light red rows
+
+    wb.save(out_path)
+    print(f"✅ Excel created with Signals + Circuit sheets: {out_path}")
 
 
 if __name__ == "__main__":
