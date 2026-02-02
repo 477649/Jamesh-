@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 # PATHS / SETTINGS
 # =========================
 DATA_DIR = "outputs/sharesansar"                  # INPUT daily share price CSVs
-SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Sector master file (Symbol -> Sector/Company)
+SECTOR_FILE = "outputs/Sector/sector_master.csv"  # Symbol -> Sector/Company (used only for labeling)
 OUT_DIR  = "outputs/PriceAction"
 LATEST_FILES_TO_LOAD = 60
 
@@ -59,10 +59,18 @@ def load_latest_files(folder, latest_n=60):
 
         rows.append(df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]])
 
-    return pd.concat(rows, ignore_index=True).sort_values(["Symbol", "Date"]).reset_index(drop=True)
+    return (
+        pd.concat(rows, ignore_index=True)
+        .sort_values(["Symbol", "Date"])
+        .reset_index(drop=True)
+    )
 
 
 def load_sector_master(path):
+    """
+    Used ONLY for labeling Sector/Company in outputs.
+    (No sector scoring is used anywhere in this version.)
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Sector master file not found: {path}")
 
@@ -78,7 +86,9 @@ def load_sector_master(path):
             sector_col = c
             break
     if sector_col is None:
-        raise ValueError("sector_master.csv must contain a Sector column (Sector/Sectors)")
+        # allow missing sector, but keep file compatible
+        df["Sector"] = None
+        sector_col = "Sector"
 
     company_col = None
     for c in ["Company", "Company Name", "company"]:
@@ -113,8 +123,8 @@ def zscore(s, n):
     return (s - s.rolling(n).mean()) / (s.rolling(n).std() + 1e-12)
 
 
-def slope_r2_last_n(close, n):
-    y = close.tail(n).values
+def slope_r2_last_n(series, n):
+    y = series.tail(n).values
     if len(y) < n or np.isnan(y).any():
         return np.nan, np.nan
     x = np.arange(n)
@@ -135,7 +145,7 @@ def add_features(g):
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
 
-    # ✅ Returns include RET1/2/4
+    # Returns include RET1/2/4
     for n in [1, 2, 4, 7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
@@ -149,6 +159,88 @@ def add_features(g):
     g["ATR15"] = tr.rolling(15).mean()
     g["ATR7_%"] = (g["ATR7"] / (g["Close"] + 1e-12)) * 100
     g["ATR_%"] = (g["ATR15"] / (g["Close"] + 1e-12)) * 100
+
+    return g
+
+
+# =========================
+# WINDOW-WISE BEHAVIOR LOGIC (7D / 15D)
+# =========================
+def _vol_trend_ratio_last_n(volume_series, n):
+    """
+    Trend proxy inside last n:
+    ratio = avg(last third) / avg(first third)
+    >1 => rising participation, <1 => fading participation
+    """
+    if len(volume_series) < n:
+        return np.nan
+    w = np.asarray(volume_series.tail(n).values, dtype=float)
+    if np.isnan(w).any():
+        return np.nan
+    k = max(2, n // 3)
+    first = np.mean(w[:k])
+    last = np.mean(w[-k:])
+    return float(last / (first + 1e-12))
+
+
+def add_window_behavior(g, win):
+    """
+    Adds explicit window-wise price-volume behavior flags:
+    - VolPriceFlag_W: CONFIRMED / DIVERGENCE / SELL_PRESSURE / NEUTRAL
+    - Distribution_W: operator exit risk pattern inside window
+    - Absorption_W: accumulation/absorption pattern inside window
+    - FollowThrough_W: short continuation behavior
+    - RetestBuy_W: breakout retest around HH(win) zone for safer entry
+    """
+    g = g.copy()
+    W = str(win)
+
+    # Window return
+    g[f"RET{W}_Window"] = g["Close"].pct_change(win) * 100
+
+    # Volume trend ratio over the window
+    g[f"VolTrendRatio_{W}"] = g["Volume"].rolling(win).apply(lambda s: _vol_trend_ratio_last_n(s, win), raw=False)
+
+    cond_up = (g[f"RET{W}_Window"] > 0)
+    cond_down = (g[f"RET{W}_Window"] < 0)
+    vol_falling = (g[f"VolTrendRatio_{W}"] < 0.90)
+    vol_rising = (g[f"VolTrendRatio_{W}"] > 1.10)
+
+    g[f"VolPriceFlag_{W}"] = "NEUTRAL"
+    g.loc[cond_up & vol_rising, f"VolPriceFlag_{W}"] = "CONFIRMED"
+    g.loc[cond_up & vol_falling, f"VolPriceFlag_{W}"] = "DIVERGENCE"
+    g.loc[cond_down & vol_rising, f"VolPriceFlag_{W}"] = "SELL_PRESSURE"
+
+    # Distribution: multiple "rejection on high volume" days + weak progress
+    vma = g["Volume"].rolling(win).mean()
+    dist_day = (g["UpperWickPct"] >= 0.55) & (g["Volume"] >= 1.5 * (vma + 1e-12)) & (g["RET1"] >= 0)
+    dist_count = dist_day.rolling(win).sum()
+    weak_progress = (g[f"RET{W}_Window"] < 5).fillna(False)  # up small despite heavy activity
+    g[f"Distribution_{W}"] = ((dist_count >= 2) & weak_progress).fillna(False)
+
+    # Absorption: repeated high volume + tight range + low avg rejection
+    hi = g["High"].rolling(win).max()
+    lo = g["Low"].rolling(win).min()
+    range_pct = ((hi - lo) / (g["Close"] + 1e-12)) * 100
+    vol_hot = ((g["Volume"] >= 1.5 * (vma + 1e-12)).rolling(win).sum() >= 2)
+    wick_ok = (g["UpperWickPct"].rolling(win).mean() <= 0.40)
+    tight = (range_pct <= 8.0)
+    g[f"Absorption_{W}"] = (vol_hot & wick_ok & tight).fillna(False)
+
+    # Follow-through: last 3 days mostly green + volume not collapsing
+    pos3 = (g["RET1"] > 0).rolling(3).sum() >= 2
+    vol_ok = g["Volume"] >= 0.8 * (vma + 1e-12)
+    g[f"FollowThrough_{W}"] = (pos3 & vol_ok).fillna(False)
+
+    # Retest buy: retest around yesterday's rolling HH(win)
+    hh = g["High"].rolling(win).max()
+    break_level = hh.shift(1)
+    g[f"RetestBuy_{W}"] = (
+        (g["Close"] >= break_level) &
+        (g["Close"] <= break_level * 1.02) &
+        (g["Volume"] >= (vma + 1e-12)) &
+        (g["UpperWickPct"] <= 0.35)
+    ).fillna(False)
 
     return g
 
@@ -201,16 +293,6 @@ def false_breakout_metrics(close, hh, volume, vma, upperwickpct):
 # =========================
 # SIGNAL HELPERS
 # =========================
-def sector_signal_from_ret(sector_ret10):
-    if pd.isna(sector_ret10):
-        return "HOLD"
-    if sector_ret10 > 0:
-        return "BUY"
-    if sector_ret10 < 0:
-        return "SELL"
-    return "HOLD"
-
-
 def stretch_flag(z):
     if pd.isna(z):
         return ""
@@ -241,15 +323,43 @@ def position_hint_from_regime(reg):
     return ""
 
 
-def confidence_advanced(early_score, trend_aligned):
-    base = (early_score / 100.0) if early_score is not None else 0.0
-    bonus = 1.0 if trend_aligned else 0.0
-    return round(0.85 * base + 0.15 * bonus, 2)
+def confidence_advanced_window(early_score, trend_aligned, distribution, divergence, absorption, followthrough, stretched):
+    """
+    Window-wise confidence: base from EarlyScore + window behavior adjustments.
+    """
+    es = (float(early_score) / 100.0) if early_score is not None else 0.0
+
+    bonus = 0.00
+    bonus += 0.03 if trend_aligned else 0.00
+    bonus += 0.04 if absorption else 0.00
+    bonus += 0.03 if followthrough else 0.00
+
+    penalty = 0.00
+    penalty += 0.08 if distribution else 0.00
+    penalty += 0.05 if divergence else 0.00
+    penalty += 0.04 if stretched else 0.00
+
+    out = np.clip(es + bonus - penalty, 0.0, 1.0)
+    return round(float(out), 2)
 
 
-def rank_score(early_score, trend_aligned, breakout_quality, sector_rel_pos):
+def rank_score_window(early_score, trend_aligned, breakout_quality,
+                      followthrough, absorption, distribution, divergence, stretched):
+    """
+    Stock-only RankScore (NO sector included).
+    """
     es = float(early_score) if early_score is not None else 0.0
-    return round(es + 5.0 * int(trend_aligned) + 5.0 * int(breakout_quality) + 2.0 * int(sector_rel_pos), 1)
+    score = (
+        es
+        + 5.0 * int(trend_aligned)
+        + 5.0 * int(breakout_quality)
+        + 3.0 * int(followthrough)
+        + 3.0 * int(absorption)
+        - 4.0 * int(distribution)
+        - 3.0 * int(divergence)
+        - 2.0 * int(stretched)
+    )
+    return round(float(score), 1)
 
 
 def early_score_7d(g):
@@ -322,32 +432,39 @@ def signals_15d(g):
     return g
 
 
-def build_reason_7d(last):
+def build_reason(last, mode):
     parts = []
-    if pd.notna(last.get("HH7")) and last["Close"] >= 0.97 * last["HH7"]:
-        parts.append("near 7D breakout")
-    if pd.notna(last.get("VMA7")) and last["Volume"] > last["VMA7"]:
-        parts.append("volume > VMA7")
-    if pd.notna(last.get("MA7")) and pd.notna(last.get("MA10")) and last["MA7"] > last["MA10"]:
-        parts.append("MA7>MA10")
+    if mode == "7D":
+        if pd.notna(last.get("HH7")) and last["Close"] >= 0.97 * last["HH7"]:
+            parts.append("near 7D breakout")
+        if pd.notna(last.get("VMA7")) and last["Volume"] > last["VMA7"]:
+            parts.append("volume > VMA7")
+        if pd.notna(last.get("MA7")) and pd.notna(last.get("MA10")) and last["MA7"] > last["MA10"]:
+            parts.append("MA7>MA10")
+    else:
+        if pd.notna(last.get("HH15")) and last["Close"] >= 0.97 * last["HH15"]:
+            parts.append("near 15D breakout")
+        if pd.notna(last.get("VMA15")) and last["Volume"] > last["VMA15"]:
+            parts.append("volume > VMA15")
+        if pd.notna(last.get("MA15")) and pd.notna(last.get("MA30")) and last["MA15"] > last["MA30"]:
+            parts.append("MA15>MA30")
+
     if pd.notna(last.get("UpperWickPct")) and last["UpperWickPct"] < 0.30:
         parts.append("low upper wick")
-    if pd.notna(last.get("Close_Z20")) and last["Close_Z20"] > 2:
+    if last.get("StretchFlag") == "STRETCHED":
         parts.append("stretched")
-    return ", ".join(parts) if parts else "short-term setup"
+    if last.get("VolPriceFlag_W") == "DIVERGENCE":
+        parts.append("vol-price divergence")
+    if bool(last.get("Distribution_W", False)):
+        parts.append("distribution risk")
+    if bool(last.get("Absorption_W", False)):
+        parts.append("absorption")
+    if bool(last.get("FollowThrough_W", False)):
+        parts.append("follow-through")
+    if bool(last.get("RetestBuy_W", False)):
+        parts.append("breakout retest")
 
-
-def build_reason_15d(last):
-    parts = []
-    if pd.notna(last.get("HH15")) and last["Close"] >= 0.97 * last["HH15"]:
-        parts.append("near 15D breakout")
-    if pd.notna(last.get("VMA15")) and last["Volume"] > last["VMA15"]:
-        parts.append("volume > VMA15")
-    if pd.notna(last.get("MA15")) and pd.notna(last.get("MA30")) and last["MA15"] > last["MA30"]:
-        parts.append("MA15>MA30")
-    if pd.notna(last.get("UpperWickPct")) and last["UpperWickPct"] < 0.30:
-        parts.append("low upper wick")
-    return ", ".join(parts) if parts else "trend/accumulation setup"
+    return ", ".join(parts) if parts else "setup"
 
 
 # =========================
@@ -429,11 +546,11 @@ def apply_row_fill_by_value(ws, col_name, match_value, fill_hex):
 
 
 # =========================
-# OUTPUT COLUMNS
+# OUTPUT COLUMNS (NO sector scoring columns)
 # =========================
 FINAL_COLS = [
     "Date","Symbol","Sector","Company",
-    "Stock Signal","Sector Signal","BuyStrength","SellStrength","Bias",
+    "Stock Signal","BuyStrength","SellStrength","Bias",
     "EarlyScore","Confidence","Confidence_Advanced","RankScore",
     "Close","Volume",
     "RET1_%","RET2_%","RET4_%",
@@ -447,7 +564,9 @@ FINAL_COLS = [
     "Close_Z20","Volume_Z20","StretchFlag",
     "Slope20","R2_20",
     "TrendHealth","VolExpansionFlag","FalseBreakoutFlag","FalseBreakoutScore",
-    "Reason","Sector_RET10"
+    # NEW window-wise flags
+    "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
+    "Reason"
 ]
 
 
@@ -457,22 +576,29 @@ FINAL_COLS = [
 def build_sheet_df(data, sector_df, mode="7D"):
     rows = []
 
+    # choose window
+    if mode == "7D":
+        win = 7
+        z_win = 7
+        slope_win = 7
+    else:
+        win = 15
+        z_win = 15
+        slope_win = 15
+
+    W = str(win)
+
     for sym, g in data.groupby("Symbol"):
         if len(g) < 35:
             continue
 
         g = add_features(g)
 
-        if mode == "7D":
-            z_win = 7
-            slope_win = 7
-        else:
-            z_win = 20
-            slope_win = 20
-
+        # window-wise zscores (kept column names for compatibility)
         g["Close_Z20"] = zscore(g["Close"], z_win)
         g["Volume_Z20"] = zscore(g["Volume"], z_win)
 
+        # slope/r2 on selected window (stored into same columns)
         sl, r2 = slope_r2_last_n(g["Close"], slope_win)
         g["Slope20"] = np.nan
         g["R2_20"] = np.nan
@@ -481,38 +607,66 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
         ve_flag = vol_expansion_flag(g["ATR7_%"], g["ATR_%"])
 
+        # signals + false breakout reference levels per mode
         if mode == "7D":
             g = signals_7d(g)
+            reg = vol_regime_from_atr_pct(g.iloc[-1]["ATR7_%"])
+            fb_flag, fb_score = false_breakout_metrics(
+                g.iloc[-1]["Close"], g.iloc[-1]["HH7"], g.iloc[-1]["Volume"], g.iloc[-1]["VMA7"], g.iloc[-1]["UpperWickPct"]
+            )
+            trend_aligned_mode = bool(pd.notna(g.iloc[-1]["MA7"]) and pd.notna(g.iloc[-1]["MA10"]) and (g.iloc[-1]["MA7"] > g.iloc[-1]["MA10"]))
         else:
             g = signals_15d(g)
+            reg = vol_regime_from_atr_pct(g.iloc[-1]["ATR_%"])
+            fb_flag, fb_score = false_breakout_metrics(
+                g.iloc[-1]["Close"], g.iloc[-1]["HH15"], g.iloc[-1]["Volume"], g.iloc[-1]["VMA15"], g.iloc[-1]["UpperWickPct"]
+            )
+            trend_aligned_mode = bool(pd.notna(g.iloc[-1]["MA15"]) and pd.notna(g.iloc[-1]["MA30"]) and (g.iloc[-1]["MA15"] > g.iloc[-1]["MA30"]))
+
+        # add explicit window-wise behavior flags
+        g = add_window_behavior(g, win)
 
         last = g.iloc[-1]
 
-        if mode == "7D":
-            reason = build_reason_7d(last)
-            reg = vol_regime_from_atr_pct(last["ATR7_%"])
-            fb_flag, fb_score = false_breakout_metrics(
-                last["Close"], last["HH7"], last["Volume"], last["VMA7"], last["UpperWickPct"]
-            )
-        else:
-            reason = build_reason_15d(last)
-            reg = vol_regime_from_atr_pct(last["ATR_%"])
-            fb_flag, fb_score = false_breakout_metrics(
-                last["Close"], last["HH15"], last["Volume"], last["VMA15"], last["UpperWickPct"]
-            )
-
-        trend_aligned = bool(pd.notna(last["MA15"]) and pd.notna(last["MA30"]) and (last["MA15"] > last["MA30"]))
-        es = int(last["EarlyScore"]) if pd.notna(last["EarlyScore"]) else None
-        conf_adv = confidence_advanced(es, trend_aligned)
         th = trend_health(last.get("Slope20"), last.get("R2_20"))
         stretch = stretch_flag(last.get("Close_Z20"))
+        stretched = (stretch == "STRETCHED")
+
+        # unify window flags to output
+        volpriceflag = last.get(f"VolPriceFlag_{W}", "NEUTRAL")
+        distribution = bool(last.get(f"Distribution_{W}", False))
+        absorption = bool(last.get(f"Absorption_{W}", False))
+        followthrough = bool(last.get(f"FollowThrough_{W}", False))
+        retestbuy = bool(last.get(f"RetestBuy_{W}", False))
+
+        divergence = (volpriceflag == "DIVERGENCE")
+
+        es = int(last["EarlyScore"]) if pd.notna(last["EarlyScore"]) else None
+        conf_adv = confidence_advanced_window(
+            es,
+            trend_aligned_mode,
+            distribution=distribution,
+            divergence=divergence,
+            absorption=absorption,
+            followthrough=followthrough,
+            stretched=stretched
+        )
+
+        reason = build_reason({
+            **last.to_dict(),
+            "StretchFlag": stretch,
+            "VolPriceFlag_W": volpriceflag,
+            "Distribution_W": distribution,
+            "Absorption_W": absorption,
+            "FollowThrough_W": followthrough,
+            "RetestBuy_W": retestbuy
+        }, mode=mode)
 
         rows.append({
             "Date": last["Date"].date() if pd.notna(last["Date"]) else None,
             "Symbol": sym,
 
             "Stock Signal": last["Stock Signal"],
-            "Sector Signal": None,
             "BuyStrength": last["BuyStrength"],
             "SellStrength": last["SellStrength"],
             "Bias": last["Bias"],
@@ -570,34 +724,40 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "FalseBreakoutFlag": bool(fb_flag),
             "FalseBreakoutScore": fb_score,
 
+            # NEW window-wise outputs
+            "VolPriceFlag_W": volpriceflag,
+            "Distribution_W": distribution,
+            "Absorption_W": absorption,
+            "FollowThrough_W": followthrough,
+            "RetestBuy_W": retestbuy,
+
             "Reason": reason,
         })
 
     df = pd.DataFrame(rows)
+
+    # Add labels (Sector/Company) only
     df = df.merge(sector_df, on="Symbol", how="left")
 
-    sector_mom = (
-        df.groupby("Sector", dropna=True)["RET10_%"]
-        .mean()
-        .rename("Sector_RET10")
-        .reset_index()
-    )
-    df = df.merge(sector_mom, on="Sector", how="left")
-    df["Sector Signal"] = df["Sector_RET10"].apply(sector_signal_from_ret)
-
-    df["__SectorRelPos"] = ((df["RET10_%"] - df["Sector_RET10"]) > 0).fillna(False)
-
+    # breakout quality per mode
     if mode == "7D":
         bq = ((df["Close"] >= df["HH7"]) & (df["Volume"] > df["VMA7"]) & (df["UpperWickPct"] < 0.30)).fillna(False)
+        trend_aligned = (df["MA7"] > df["MA10"]).fillna(False)
     else:
         bq = ((df["Close"] >= df["HH15"]) & (df["Volume"] > df["VMA15"]) & (df["UpperWickPct"] < 0.30)).fillna(False)
+        trend_aligned = (df["MA15"] > df["MA30"]).fillna(False)
 
-    trend_aligned = (df["MA15"] > df["MA30"]).fillna(False)
+    stretched = (df["StretchFlag"] == "STRETCHED").fillna(False)
+    divergence = (df["VolPriceFlag_W"] == "DIVERGENCE").fillna(False)
+
+    # stock-only RankScore
     df["RankScore"] = [
-        rank_score(es, ta, bqi, sr)
-        for es, ta, bqi, sr in zip(df["EarlyScore"], trend_aligned, bq, df["__SectorRelPos"])
+        rank_score_window(es, ta, bqi, ft, ab, ds, dv, st)
+        for es, ta, bqi, ft, ab, ds, dv, st in zip(
+            df["EarlyScore"], trend_aligned, bq,
+            df["FollowThrough_W"], df["Absorption_W"], df["Distribution_W"], divergence, stretched
+        )
     ]
-    df = df.drop(columns=["__SectorRelPos"], errors="ignore")
 
     df = df[[c for c in FINAL_COLS if c in df.columns]]
     df = df.sort_values(["RankScore", "EarlyScore", "Confidence_Advanced"], ascending=[False, False, False])
@@ -605,13 +765,13 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
-# CIRCUIT WATCHLIST (TOMORROW)
+# CIRCUIT WATCHLIST (TOMORROW) - STOCK ONLY (NO SECTOR)
 # =========================
 def build_circuit_watchlist(df):
     """
-    Uses df (recommended df7 for short-term) and creates:
+    Creates:
     - UpperCircuitPrice / LowerCircuitPrice (based on today's close)
-    - UpCircuitScore / DownCircuitScore
+    - UpCircuitScore / DownCircuitScore (stock-only)
     - CircuitPick (UP/DOWN)
     """
     if df.empty:
@@ -637,16 +797,25 @@ def build_circuit_watchlist(df):
     near_hh7 = ((x["Close"] / (hh7 + 1e-12)) >= 0.98).fillna(False)
     near_hh15 = ((x["Close"] / (hh15 + 1e-12)) >= 0.98).fillna(False)
 
-    # ---- UP SCORE (0-100 approx) ----
-    up_score = (
+    # ---- UP SCORE (0-100 approx) ---- (NO SECTOR)
+    up_base = (
         18 * (ret1 >= 5).astype(int) +
         18 * (ret2 >= 7).astype(int) +
         12 * (ret4 >= 10).astype(int) +
         18 * (vol_ratio7 >= 1.5).astype(int) +
         12 * (near_hh7 | near_hh15).astype(int) +
-        10 * (x["UpperWickPct"].fillna(1.0) <= 0.30).astype(int) +
-        12 * (x["Sector_RET10"].fillna(-1) > 0).astype(int)
+        10 * (x["UpperWickPct"].fillna(1.0) <= 0.30).astype(int)
     ).clip(0, 100)
+
+    # penalties (stock-only)
+    penalty = (
+        15 * x["Distribution_W"].fillna(False).astype(int) +
+        10 * (x["StretchFlag"].fillna("") == "STRETCHED").astype(int) +
+        10 * (x["VolPriceFlag_W"].fillna("") == "DIVERGENCE").astype(int) +
+        8  * x["FalseBreakoutFlag"].fillna(False).astype(int)
+    )
+
+    x["UpCircuitScore"] = (up_base - penalty).clip(0, 100).astype(int)
 
     # ---- DOWN SCORE (0-100 approx) ----
     down_score = (
@@ -659,7 +828,6 @@ def build_circuit_watchlist(df):
         12 * (x["TrendHealth"].fillna("") == "DOWN").astype(int)
     ).clip(0, 100)
 
-    x["UpCircuitScore"] = up_score.astype(int)
     x["DownCircuitScore"] = down_score.astype(int)
 
     # pick label
@@ -672,7 +840,8 @@ def build_circuit_watchlist(df):
         "Date","Symbol","Sector","Company","Close",
         "UpperCircuitPrice","UpCircuitScore",
         "RET1_%","RET2_%","RET4_%",
-        "Volume","VMA7","UpperWickPct","Sector_RET10",
+        "Volume","VMA7","UpperWickPct",
+        "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
         "Stock Signal","BuyStrength","Bias","Reason",
         "CircuitPick"
     ]
@@ -680,7 +849,8 @@ def build_circuit_watchlist(df):
         "Date","Symbol","Sector","Company","Close",
         "LowerCircuitPrice","DownCircuitScore",
         "RET1_%","RET2_%","RET4_%",
-        "Volume","VMA7","UpperWickPct","Sector_RET10",
+        "Volume","VMA7","UpperWickPct",
+        "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
         "Stock Signal","SellStrength","Bias","Reason",
         "CircuitPick"
     ]
@@ -724,7 +894,6 @@ def main():
         "Close_Z20":"0.00","Volume_Z20":"0.00",
         "Slope20":"0.00","R2_20":"0.00",
         "RankScore":"0.00",
-        "Sector_RET10":"0.00",
         "FalseBreakoutScore":"0",
         "Close":"#,##0.00",
         "Volume":"#,##0",
@@ -778,7 +947,7 @@ def main():
     apply_row_fill_by_value(ws4, "CircuitPick", "DOWN", "FFEBEE")  # light red rows
 
     wb.save(out_path)
-    print(f"✅ Excel created with Signals + Circuit sheets: {out_path}")
+    print(f"✅ Excel created (stock-only circuit logic): {out_path}")
 
 
 if __name__ == "__main__":
