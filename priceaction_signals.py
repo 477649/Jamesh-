@@ -20,16 +20,26 @@ LATEST_FILES_TO_LOAD = 60
 
 TOP_CIRCUIT_N = 25  # how many to show in circuit sheets
 
-# ---- NEW: 3–10D Swing Scanner settings (NEPSE daily) ----
+# ---- 3–10D Swing Scanner settings (NEPSE daily) ----
 SWING_OUT_TOP_N = 80
 SWING_MIN_HISTORY = 30                 # 30+ days workable; 60–90 best
-SWING_VALUE_TRADED_MIN = 2_500_000     # liquidity filter (adjust based on your capital)
+SWING_VALUE_TRADED_MIN = 2_500_000     # basic liquidity filter for scanner (your old)
 SWING_VOL_SPIKE_BREAKOUT = 1.30        # breakout confirmation
 SWING_VOL_SPIKE_COMPRESSION = 1.40     # compression expansion
 SWING_RSI_MIN = 50
 SWING_RSI_MAX = 70
 SWING_MAX_HOLD_DAYS = 10
 SWING_TIME_STOP_DAY = 6
+
+# ---- NEW: FINAL TRADE FILTERS + RANK (strict) ----
+MIN_SCORE = 80
+MIN_VALUE_TRADED = 20_000_000   # NPR (recommended for swing in NEPSE)
+MIN_VOL_SPIKE = 1.2
+MAX_VWAP_DIST = 2.0             # %
+MIN_CLOSE_POS = 0.65
+MIN_BODY_PCT = 40.0
+MIN_ATR_PCT = 2.0               # ATR14 as % of Close
+MIN_RR = 1.5                    # (T1-Entry)/(Entry-Stop) >= 1.5
 
 
 # =========================
@@ -58,9 +68,8 @@ def load_latest_files(folder, latest_n=60):
             elif "VOL" in df.columns:
                 df["Volume"] = df["VOL"]
 
-        # ---- NEW: VWAP column normalization ----
+        # ---- VWAP column normalization ----
         if "VWAP" not in df.columns:
-            # try common variants
             for c in ["vwap", "Vwap", "VWAP Price", "Daily VWAP"]:
                 if c in df.columns:
                     df["VWAP"] = df[c]
@@ -171,7 +180,6 @@ def add_features(g):
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
 
-    # Returns include RET1/2/4
     for n in [1, 2, 4, 7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
@@ -190,43 +198,34 @@ def add_features(g):
 
 
 # =========================
-# NEW: 3–10D Swing Features (daily OHLCV + VWAP)
+# 3–10D Swing Features (daily OHLCV + VWAP)
 # =========================
 def add_swing_features(g):
     g = g.copy()
 
-    # EMAs for swing trend
     g["EMA10"] = ema(g["Close"], 10)
     g["EMA20"] = ema(g["Close"], 20)
     g["EMA50"] = ema(g["Close"], 50)
 
-    # ATR14 for stops/targets
     tr = true_range(g["High"], g["Low"], g["Close"])
     g["ATR14"] = tr.rolling(14).mean()
 
-    # Volume baselines
     g["VolAvg5"] = g["Volume"].rolling(5).mean()
     g["VolAvg20"] = g["Volume"].rolling(20).mean()
     g["VolSpike20"] = safe_div(g["Volume"], g["VolAvg20"])
 
-    # Liquidity proxy
     g["ValueTraded"] = g["Close"] * g["Volume"]
 
-    # Candle quality
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
     g["RangePct"] = safe_div(rng, g["Close"]) * 100
-    g["ClosePos"] = safe_div((g["Close"] - g["Low"]), rng)  # 0..1
+    g["ClosePos"] = safe_div((g["Close"] - g["Low"]), rng)
     g["BodyPct"] = safe_div((g["Close"] - g["Open"]).abs(), rng) * 100
 
-    # VWAP control
     g["AboveVWAP"] = g["Close"] > g["VWAP"]
     g["VWAP_DistPct"] = safe_div((g["Close"] - g["VWAP"]), g["VWAP"]) * 100
     g["VWAP_Slope5"] = g["VWAP"].diff(5)
 
-    # 20D breakout level (exclude today by shift later)
     g["HH20"] = g["High"].rolling(20).max()
-
-    # ATR contraction proxy for compression
     g["ATR14_5ago"] = g["ATR14"].shift(5)
 
     return g
@@ -234,7 +233,6 @@ def add_swing_features(g):
 
 # =========================
 # WINDOW-WISE BEHAVIOR LOGIC (7D / 15D)
-# (UNCHANGED)
 # =========================
 def _vol_trend_ratio_last_n(volume_series, n):
     if len(volume_series) < n:
@@ -296,7 +294,7 @@ def add_window_behavior(g, win):
 
 
 # =========================
-# ADVANCED INSIGHTS (UNCHANGED)
+# ADVANCED INSIGHTS
 # =========================
 def trend_health(slope, r2):
     if pd.isna(slope) or pd.isna(r2):
@@ -341,7 +339,7 @@ def false_breakout_metrics(close, hh, volume, vma, upperwickpct):
 
 
 # =========================
-# SIGNAL HELPERS (UNCHANGED)
+# SIGNAL HELPERS
 # =========================
 def stretch_flag(z):
     if pd.isna(z):
@@ -770,7 +768,6 @@ def build_sheet_df(data, sector_df, mode="7D"):
         })
 
     df = pd.DataFrame(rows)
-
     df = df.merge(sector_df, on="Symbol", how="left")
 
     if mode == "7D":
@@ -797,6 +794,96 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
+# NEW: FINAL TRADE FILTER + RANK (for Swing Scanner output)
+# =========================
+def add_trade_filter_rank(df):
+    """
+    Adds TradeOK + FilterPassCount + TradeRank (rank only among TradeOK).
+    Uses strict swing filters designed for 3–10 day holding.
+    """
+    if df.empty:
+        df["TradeOK"] = False
+        df["FilterPassCount"] = 0
+        df["TradeRank"] = np.nan
+        return df
+
+    x = df.copy()
+
+    # Ensure required columns exist (safe defaults)
+    for col in ["SwingScore","ValueTraded","VolSpike20","VWAP_Dist%","ClosePos","Body%","Close","Entry","Stop","T1_1.5R","EMA20","EMA50","VWAP"]:
+        if col not in x.columns:
+            x[col] = np.nan
+
+    # ATR% = ATR14 / Close *100
+    if "ATR14" in x.columns:
+        atr_pct = (x["ATR14"] / (x["Close"] + 1e-12)) * 100
+    else:
+        atr_pct = np.nan * x["Close"]
+
+    # RR = (T1-Entry)/(Entry-Stop)
+    risk = (x["Entry"] - x["Stop"])
+    reward = (x["T1_1.5R"] - x["Entry"])
+    rr = np.where(risk > 0, reward / (risk + 1e-12), np.nan)
+
+    # Trend alignment
+    trend_up = (x["EMA20"] > x["EMA50"]) & (x["Close"] > x["EMA20"])
+
+    # VWAP control
+    vwap_ok = (x["Close"] > x["VWAP"]) & (x["VWAP_Dist%"].abs() <= MAX_VWAP_DIST)
+
+    filters = {
+        "Score": (x["SwingScore"] >= MIN_SCORE),
+        "Liquidity": (x["ValueTraded"] >= MIN_VALUE_TRADED),
+        "Trend": trend_up.fillna(False),
+        "VWAP": vwap_ok.fillna(False),
+        "VolSpike": (x["VolSpike20"] >= MIN_VOL_SPIKE),
+        "ATR%": (atr_pct >= MIN_ATR_PCT),
+        "ClosePos": (x["ClosePos"] >= MIN_CLOSE_POS),
+        "Body%": (x["Body%"] >= MIN_BODY_PCT),
+        "RR": (rr >= MIN_RR),
+    }
+
+    pass_matrix = np.column_stack([f.fillna(False).astype(int).values for f in filters.values()])
+    x["FilterPassCount"] = pass_matrix.sum(axis=1).astype(int)
+
+    # Strict TradeOK: must pass ALL critical filters
+    critical = (
+        filters["Score"] &
+        filters["Liquidity"] &
+        filters["Trend"] &
+        filters["VWAP"] &
+        filters["VolSpike"] &
+        filters["ATR%"] &
+        filters["ClosePos"] &
+        filters["Body%"] &
+        filters["RR"]
+    ).fillna(False)
+
+    x["TradeOK"] = critical
+
+    # Rank ONLY among TradeOK (best = 1)
+    # Sorting preference: Score desc, Liquidity desc, RR desc, VolSpike desc, VWAP_Dist% asc
+    x["_RR"] = rr
+    x["_ATRpct"] = atr_pct
+
+    ok = x[x["TradeOK"]].copy()
+    if not ok.empty:
+        ok = ok.sort_values(
+            ["SwingScore", "ValueTraded", "_RR", "VolSpike20", "VWAP_Dist%"],
+            ascending=[False, False, False, False, True],
+        )
+        ok["TradeRank"] = np.arange(1, len(ok) + 1)
+        x = x.merge(ok[["Symbol", "TradeRank"]], on="Symbol", how="left")
+    else:
+        x["TradeRank"] = np.nan
+
+    # cleanup helpers
+    x.drop(columns=[c for c in ["_RR","_ATRpct"] if c in x.columns], inplace=True, errors="ignore")
+
+    return x
+
+
+# =========================
 # NEW: 3–10D Swing Scanner (BUY / WATCH / AVOID / RANKED)
 # =========================
 SWING_COLS = [
@@ -806,7 +893,9 @@ SWING_COLS = [
     "EMA10","EMA20","EMA50","RSI14","ATR14","Range%","ClosePos","Body%",
     "Entry","Stop","T1_1.5R","T2_2.5R","T3_3R",
     "ExpectedHoldDays","TimeStopDay","MaxHoldDays",
-    "SwingReason"
+    "SwingReason",
+    # NEW (at the end)
+    "TradeOK","FilterPassCount","TradeRank"
 ]
 
 def build_swing_scanner_df(data, sector_df):
@@ -817,57 +906,46 @@ def build_swing_scanner_df(data, sector_df):
         if len(g) < SWING_MIN_HISTORY:
             continue
 
-        g = add_features(g)         # keep your existing RSI14 etc
-        g = add_swing_features(g)   # add EMA/VWAP/ATR/VolSpike etc
+        g = add_features(g)
+        g = add_swing_features(g)
 
         last = g.iloc[-1]
         prior = g.iloc[:-1]
 
-        # basic sanity
         if pd.isna(last["Close"]) or pd.isna(last["VWAP"]) or pd.isna(last["Volume"]):
             continue
 
-        # liquidity filter (NEPSE must)
         value_traded = float(last["ValueTraded"]) if pd.notna(last["ValueTraded"]) else 0.0
         liq_ok = value_traded >= SWING_VALUE_TRADED_MIN
 
-        # trend & vwap control
         trend_ok = pd.notna(last["EMA20"]) and (last["Close"] > last["EMA20"])
         trend_up = pd.notna(last["EMA50"]) and pd.notna(last["EMA20"]) and (last["EMA20"] > last["EMA50"])
         vwap_ok = bool(last["AboveVWAP"]) and (pd.isna(last["VWAP_Slope5"]) or last["VWAP_Slope5"] >= 0)
 
-        # RSI zone
         rsi_ok = pd.notna(last["RSI14"]) and (SWING_RSI_MIN <= last["RSI14"] <= SWING_RSI_MAX)
 
-        # volume stats
         vol_spike = float(last["VolSpike20"]) if pd.notna(last["VolSpike20"]) else np.nan
         vol_ok_breakout = pd.notna(vol_spike) and (vol_spike >= SWING_VOL_SPIKE_BREAKOUT)
         vol_ok_compress = pd.notna(vol_spike) and (vol_spike >= SWING_VOL_SPIKE_COMPRESSION)
 
-        # candle strength
         closepos_ok = pd.notna(last["ClosePos"]) and (last["ClosePos"] >= 0.65)
         body_ok = pd.notna(last["BodyPct"]) and (last["BodyPct"] >= 35)
 
-        # breakout level (20D high excluding today)
         hh20_prior = prior["High"].tail(20).max() if len(prior) >= 20 else prior["High"].max()
         breakout = pd.notna(hh20_prior) and (last["Close"] > hh20_prior)
 
-        # pullback near EMA20 within 1 ATR
         pullback = False
         if pd.notna(last["ATR14"]) and last["ATR14"] > 0 and pd.notna(last["EMA20"]):
             pullback = trend_up and (abs(last["Close"] - last["EMA20"]) <= 1.0 * last["ATR14"])
 
-        # compression -> expansion
         compression = False
         if pd.notna(last["ATR14"]) and pd.notna(last["ATR14_5ago"]):
             atr_contract = last["ATR14"] < last["ATR14_5ago"]
             compression = trend_ok and atr_contract and vol_ok_compress and (pd.notna(last["ClosePos"]) and last["ClosePos"] >= 0.60)
 
-        # risk flags (daily-only)
         too_extended = pd.notna(last["VWAP_DistPct"]) and (last["VWAP_DistPct"] > 6.0)
         too_volatile = pd.notna(last["RangePct"]) and (last["RangePct"] > 12.0)
 
-        # ---- scoring (0..100) aligned to 3–10D swing ----
         score = 0
         reasons = []
 
@@ -878,7 +956,6 @@ def build_swing_scanner_df(data, sector_df):
         if closepos_ok: score += 8; reasons.append("Strong close")
         if body_ok: score += 4; reasons.append("Good candle body")
 
-        # signal contributions
         signal_type = ""
         exp_hold = ""
         if breakout and vol_ok_breakout and closepos_ok and trend_ok and vwap_ok:
@@ -897,26 +974,22 @@ def build_swing_scanner_df(data, sector_df):
             exp_hold = "4–8"
             reasons.append("Compression→Expansion")
         else:
-            # still allow trend continuation as WATCH if strong
             if trend_ok and vwap_ok:
                 score += 8
                 signal_type = "Trend"
                 exp_hold = "3–10"
                 reasons.append("Trend continuation")
 
-        # volume general bonus
         if pd.notna(vol_spike) and vol_spike >= 1.2:
             score += 8; reasons.append("Volume>Avg20")
         elif pd.notna(last["VolAvg5"]) and pd.notna(last["VolAvg20"]) and (last["VolAvg5"] > last["VolAvg20"]):
             score += 6; reasons.append("VolAvg5>VolAvg20")
 
-        # liquidity
         if liq_ok:
             score += 10; reasons.append("Liquidity OK")
         else:
             score -= 18; reasons.append("Low liquidity")
 
-        # penalties
         if too_extended:
             score -= 10; reasons.append("Extended vs VWAP")
         if too_volatile:
@@ -928,14 +1001,12 @@ def build_swing_scanner_df(data, sector_df):
 
         score = int(max(0, min(100, score)))
 
-        # category decision
         category = "AVOID"
         if (score >= 70) and liq_ok and vwap_ok and trend_ok and (signal_type in ["Breakout","Pullback","Compression","Trend"]):
             category = "BUY"
         elif (score >= 50) and liq_ok:
             category = "WATCH"
 
-        # trade levels (ATR14-based) and 3–10D profit plan
         entry = float(last["Close"])
         stop = np.nan
         t1 = np.nan
@@ -991,17 +1062,26 @@ def build_swing_scanner_df(data, sector_df):
     out = pd.DataFrame(rows)
     out = out.merge(sector_df, on="Symbol", how="left")
 
-    # final order
+    # Add strict TradeOK / TradeRank based on filters
+    out = add_trade_filter_rank(out)
+
+    # keep only columns order
     out = out[[c for c in SWING_COLS if c in out.columns]]
 
-    # ranked view
-    ranked = out.sort_values(["SwingScore","ValueTraded"], ascending=[False, False])
+    # ranked view (now uses TradeOK + TradeRank too)
+    ranked = out.sort_values(
+        ["TradeOK", "TradeRank", "SwingScore", "ValueTraded"],
+        ascending=[False, True, False, False]
+    )
 
     buy = ranked[ranked["SwingCategory"] == "BUY"].copy()
     watch = ranked[ranked["SwingCategory"] == "WATCH"].copy()
     avoid = ranked[ranked["SwingCategory"] == "AVOID"].copy()
 
-    return buy, watch, avoid, ranked.head(SWING_OUT_TOP_N)
+    # top sheet shows best actionable first
+    top = ranked.head(SWING_OUT_TOP_N)
+
+    return buy, watch, avoid, top
 
 
 # =========================
@@ -1109,7 +1189,7 @@ def main():
     # circuit sheets (use df7 for short-term)
     up_watch, down_watch = build_circuit_watchlist(df7)
 
-    # ---- NEW: Swing Scanner sheets (3–10 days) ----
+    # swing scanner
     swing_buy, swing_watch, swing_avoid, swing_ranked = build_swing_scanner_df(data, sector_df)
 
     wb = Workbook()
@@ -1135,7 +1215,7 @@ def main():
         "UpCircuitScore":"0",
         "DownCircuitScore":"0",
 
-        # ---- NEW formatting for Swing Scanner ----
+        # Swing formats
         "SwingScore":"0",
         "VWAP":"#,##0.00",
         "VWAP_Dist%":"0.00",
@@ -1154,6 +1234,8 @@ def main():
         "T3_3R":"#,##0.00",
         "TimeStopDay":"0",
         "MaxHoldDays":"0",
+        "FilterPassCount":"0",
+        "TradeRank":"0",
     }
 
     # Sheet 1: Signals_7D
@@ -1175,7 +1257,7 @@ def main():
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
-    # Sheet 3: Circuit_UP_Tomorrow (GREEN header)
+    # Sheet 3: Circuit_UP_Tomorrow
     ws3 = wb.create_sheet("Circuit_UP_Tomorrow")
     write_table(ws3, up_watch, "CircuitUpTbl", header_color="2E7D32")
     number_format(ws3, fmt_map)
@@ -1185,7 +1267,7 @@ def main():
     color_scale(ws3, "RET4_%")
     apply_row_fill_by_value(ws3, "CircuitPick", "UP", "E8F5E9")
 
-    # Sheet 4: Circuit_DOWN_Tomorrow (RED header)
+    # Sheet 4: Circuit_DOWN_Tomorrow
     ws4 = wb.create_sheet("Circuit_DOWN_Tomorrow")
     write_table(ws4, down_watch, "CircuitDownTbl", header_color="B71C1C")
     number_format(ws4, fmt_map)
@@ -1195,17 +1277,19 @@ def main():
     color_scale(ws4, "RET4_%")
     apply_row_fill_by_value(ws4, "CircuitPick", "DOWN", "FFEBEE")
 
-    # ---- NEW Swing Scanner sheets ----
+    # Swing sheets
     ws5 = wb.create_sheet("Swing_BUY_3_10D")
     write_table(ws5, swing_buy, "SwingBuyTbl", header_color="2E7D32")
     number_format(ws5, fmt_map)
     color_scale(ws5, "SwingScore")
+    color_scale(ws5, "TradeRank")
     apply_row_fill_by_value(ws5, "SwingCategory", "BUY", "E8F5E9")
 
     ws6 = wb.create_sheet("Swing_WATCH_3_10D")
-    write_table(ws6, swing_watch, "SwingWatchTbl", header_color="F9A825")  # amber
+    write_table(ws6, swing_watch, "SwingWatchTbl", header_color="F9A825")
     number_format(ws6, fmt_map)
     color_scale(ws6, "SwingScore")
+    color_scale(ws6, "FilterPassCount")
 
     ws7 = wb.create_sheet("Swing_AVOID_3_10D")
     write_table(ws7, swing_avoid, "SwingAvoidTbl", header_color="B71C1C")
@@ -1214,12 +1298,14 @@ def main():
     apply_row_fill_by_value(ws7, "SwingCategory", "AVOID", "FFEBEE")
 
     ws8 = wb.create_sheet("Swing_RANKED_TOP")
-    write_table(ws8, swing_ranked, "SwingRankedTbl", header_color="1565C0")  # blue
+    write_table(ws8, swing_ranked, "SwingRankedTbl", header_color="1565C0")
     number_format(ws8, fmt_map)
     color_scale(ws8, "SwingScore")
+    color_scale(ws8, "TradeRank")
+    color_scale(ws8, "FilterPassCount")
 
     wb.save(out_path)
-    print(f"✅ Excel created (Signals + Circuits + Swing 3–10D): {out_path}")
+    print(f"✅ Excel created (Signals + Circuits + Swing 3–10D + TradeRank): {out_path}")
 
 
 if __name__ == "__main__":
