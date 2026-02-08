@@ -1,3 +1,7 @@
+# priceaction_signals.py
+# Signals (7D/15D) + Circuit watchlist + Swing Scanner (3–10D) + TradeOK/TradeRank
+# NOTE: This version includes the FIX for your error (ndarray .fillna) by forcing rr/atr_pct to pandas Series.
+
 import os, re, glob
 import numpy as np
 import pandas as pd
@@ -20,10 +24,10 @@ LATEST_FILES_TO_LOAD = 60
 
 TOP_CIRCUIT_N = 25  # how many to show in circuit sheets
 
-# ---- 3–10D Swing Scanner settings (NEPSE daily) ----
+# ---- Swing Scanner settings (NEPSE daily, 3–10D holding) ----
 SWING_OUT_TOP_N = 80
 SWING_MIN_HISTORY = 30                 # 30+ days workable; 60–90 best
-SWING_VALUE_TRADED_MIN = 2_500_000     # basic liquidity filter for scanner (your old)
+SWING_VALUE_TRADED_MIN = 2_500_000     # liquidity filter (adjust based on your capital)
 SWING_VOL_SPIKE_BREAKOUT = 1.30        # breakout confirmation
 SWING_VOL_SPIKE_COMPRESSION = 1.40     # compression expansion
 SWING_RSI_MIN = 50
@@ -31,15 +35,15 @@ SWING_RSI_MAX = 70
 SWING_MAX_HOLD_DAYS = 10
 SWING_TIME_STOP_DAY = 6
 
-# ---- NEW: FINAL TRADE FILTERS + RANK (strict) ----
-MIN_SCORE = 80
-MIN_VALUE_TRADED = 20_000_000   # NPR (recommended for swing in NEPSE)
-MIN_VOL_SPIKE = 1.2
-MAX_VWAP_DIST = 2.0             # %
-MIN_CLOSE_POS = 0.65
-MIN_BODY_PCT = 40.0
-MIN_ATR_PCT = 2.0               # ATR14 as % of Close
-MIN_RR = 1.5                    # (T1-Entry)/(Entry-Stop) >= 1.5
+# ---- NEW: Trade filter + ranking thresholds (used by add_trade_filter_rank) ----
+MIN_SCORE        = 70
+MIN_VALUE_TRADED = SWING_VALUE_TRADED_MIN
+MIN_VOL_SPIKE    = 1.20
+MIN_ATR_PCT      = 1.00
+MIN_CLOSE_POS    = 0.65
+MIN_BODY_PCT     = 25.0
+MIN_RR           = 1.0
+MAX_VWAP_DIST    = 6.0   # percent
 
 
 # =========================
@@ -68,7 +72,7 @@ def load_latest_files(folder, latest_n=60):
             elif "VOL" in df.columns:
                 df["Volume"] = df["VOL"]
 
-        # ---- VWAP column normalization ----
+        # ---- VWAP normalization ----
         if "VWAP" not in df.columns:
             for c in ["vwap", "Vwap", "VWAP Price", "Daily VWAP"]:
                 if c in df.columns:
@@ -95,10 +99,6 @@ def load_latest_files(folder, latest_n=60):
 
 
 def load_sector_master(path):
-    """
-    Used ONLY for labeling Sector/Company in outputs.
-    (No sector scoring is used anywhere in this version.)
-    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Sector master file not found: {path}")
 
@@ -198,7 +198,7 @@ def add_features(g):
 
 
 # =========================
-# 3–10D Swing Features (daily OHLCV + VWAP)
+# SWING FEATURES (3–10D)
 # =========================
 def add_swing_features(g):
     g = g.copy()
@@ -339,7 +339,7 @@ def false_breakout_metrics(close, hh, volume, vma, upperwickpct):
 
 
 # =========================
-# SIGNAL HELPERS
+# SIGNAL HELPERS (7D/15D)
 # =========================
 def stretch_flag(z):
     if pd.isna(z):
@@ -588,7 +588,7 @@ def apply_row_fill_by_value(ws, col_name, match_value, fill_hex):
 
 
 # =========================
-# OUTPUT COLUMNS (existing)
+# OUTPUT COLUMNS
 # =========================
 FINAL_COLS = [
     "Date","Symbol","Sector","Company",
@@ -612,7 +612,7 @@ FINAL_COLS = [
 
 
 # =========================
-# BUILD SHEET DF (existing 7D/15D logic)
+# BUILD SHEET DF (7D/15D)
 # =========================
 def build_sheet_df(data, sector_df, mode="7D"):
     rows = []
@@ -794,12 +794,15 @@ def build_sheet_df(data, sector_df, mode="7D"):
 
 
 # =========================
-# NEW: FINAL TRADE FILTER + RANK (for Swing Scanner output)
+# NEW: Trade filter + rank (FIXED)
 # =========================
 def add_trade_filter_rank(df):
     """
-    Adds TradeOK + FilterPassCount + TradeRank (rank only among TradeOK).
-    Uses strict swing filters designed for 3–10 day holding.
+    Adds:
+      - TradeOK: strict pass/fail for swing trade
+      - FilterPassCount: how many filters passed (0..N)
+      - TradeRank: rank among TradeOK trades (1..)
+    FIX: force rr/atr_pct to pandas Series so .fillna works.
     """
     if df.empty:
         df["TradeOK"] = False
@@ -809,21 +812,24 @@ def add_trade_filter_rank(df):
 
     x = df.copy()
 
-    # Ensure required columns exist (safe defaults)
-    for col in ["SwingScore","ValueTraded","VolSpike20","VWAP_Dist%","ClosePos","Body%","Close","Entry","Stop","T1_1.5R","EMA20","EMA50","VWAP"]:
+    # Ensure required columns exist
+    required_cols = [
+        "SwingScore","ValueTraded","VolSpike20","VWAP_Dist%","ClosePos","Body%",
+        "Close","Entry","Stop","T1_1.5R","EMA20","EMA50","VWAP","ATR14","Symbol"
+    ]
+    for col in required_cols:
         if col not in x.columns:
             x[col] = np.nan
 
-    # ATR% = ATR14 / Close *100
-    if "ATR14" in x.columns:
-        atr_pct = (x["ATR14"] / (x["Close"] + 1e-12)) * 100
-    else:
-        atr_pct = np.nan * x["Close"]
+    # ATR% as Series
+    atr_pct = (x["ATR14"] / (x["Close"] + 1e-12)) * 100
+    atr_pct = pd.Series(atr_pct, index=x.index)
 
-    # RR = (T1-Entry)/(Entry-Stop)
+    # RR as Series
     risk = (x["Entry"] - x["Stop"])
     reward = (x["T1_1.5R"] - x["Entry"])
     rr = np.where(risk > 0, reward / (risk + 1e-12), np.nan)
+    rr = pd.Series(rr, index=x.index)
 
     # Trend alignment
     trend_up = (x["EMA20"] > x["EMA50"]) & (x["Close"] > x["EMA20"])
@@ -832,59 +838,47 @@ def add_trade_filter_rank(df):
     vwap_ok = (x["Close"] > x["VWAP"]) & (x["VWAP_Dist%"].abs() <= MAX_VWAP_DIST)
 
     filters = {
-        "Score": (x["SwingScore"] >= MIN_SCORE),
-        "Liquidity": (x["ValueTraded"] >= MIN_VALUE_TRADED),
-        "Trend": trend_up.fillna(False),
-        "VWAP": vwap_ok.fillna(False),
-        "VolSpike": (x["VolSpike20"] >= MIN_VOL_SPIKE),
-        "ATR%": (atr_pct >= MIN_ATR_PCT),
-        "ClosePos": (x["ClosePos"] >= MIN_CLOSE_POS),
-        "Body%": (x["Body%"] >= MIN_BODY_PCT),
-        "RR": (rr >= MIN_RR),
+        "Score":      (x["SwingScore"] >= MIN_SCORE),
+        "Liquidity":  (x["ValueTraded"] >= MIN_VALUE_TRADED),
+        "Trend":      trend_up,
+        "VWAP":       vwap_ok,
+        "VolSpike":   (x["VolSpike20"] >= MIN_VOL_SPIKE),
+        "ATR%":       (atr_pct >= MIN_ATR_PCT),
+        "ClosePos":   (x["ClosePos"] >= MIN_CLOSE_POS),
+        "Body%":      (x["Body%"] >= MIN_BODY_PCT),
+        "RR":         (rr >= MIN_RR),
     }
 
-    pass_matrix = np.column_stack([f.fillna(False).astype(int).values for f in filters.values()])
+    pass_matrix = np.column_stack([
+        filters[k].fillna(False).astype(int).values for k in filters.keys()
+    ])
     x["FilterPassCount"] = pass_matrix.sum(axis=1).astype(int)
 
-    # Strict TradeOK: must pass ALL critical filters
-    critical = (
-        filters["Score"] &
-        filters["Liquidity"] &
-        filters["Trend"] &
-        filters["VWAP"] &
-        filters["VolSpike"] &
-        filters["ATR%"] &
-        filters["ClosePos"] &
-        filters["Body%"] &
-        filters["RR"]
-    ).fillna(False)
-
+    # TradeOK must pass all filters
+    critical = pd.Series(True, index=x.index)
+    for k in filters.keys():
+        critical = critical & filters[k].fillna(False)
     x["TradeOK"] = critical
 
-    # Rank ONLY among TradeOK (best = 1)
-    # Sorting preference: Score desc, Liquidity desc, RR desc, VolSpike desc, VWAP_Dist% asc
+    # Rank only among TradeOK
     x["_RR"] = rr
-    x["_ATRpct"] = atr_pct
-
     ok = x[x["TradeOK"]].copy()
     if not ok.empty:
         ok = ok.sort_values(
             ["SwingScore", "ValueTraded", "_RR", "VolSpike20", "VWAP_Dist%"],
-            ascending=[False, False, False, False, True],
+            ascending=[False, False, False, False, True]
         )
         ok["TradeRank"] = np.arange(1, len(ok) + 1)
         x = x.merge(ok[["Symbol", "TradeRank"]], on="Symbol", how="left")
     else:
         x["TradeRank"] = np.nan
 
-    # cleanup helpers
-    x.drop(columns=[c for c in ["_RR","_ATRpct"] if c in x.columns], inplace=True, errors="ignore")
-
+    x.drop(columns=["_RR"], inplace=True, errors="ignore")
     return x
 
 
 # =========================
-# NEW: 3–10D Swing Scanner (BUY / WATCH / AVOID / RANKED)
+# SWING SCANNER
 # =========================
 SWING_COLS = [
     "Date","Symbol","Sector","Company",
@@ -894,9 +888,10 @@ SWING_COLS = [
     "Entry","Stop","T1_1.5R","T2_2.5R","T3_3R",
     "ExpectedHoldDays","TimeStopDay","MaxHoldDays",
     "SwingReason",
-    # NEW (at the end)
+    # NEW
     "TradeOK","FilterPassCount","TradeRank"
 ]
+
 
 def build_swing_scanner_df(data, sector_df):
     rows = []
@@ -906,8 +901,8 @@ def build_swing_scanner_df(data, sector_df):
         if len(g) < SWING_MIN_HISTORY:
             continue
 
-        g = add_features(g)
-        g = add_swing_features(g)
+        g = add_features(g)         # RSI14 etc
+        g = add_swing_features(g)   # EMA/VWAP/ATR/VolSpike etc
 
         last = g.iloc[-1]
         prior = g.iloc[:-1]
@@ -1012,6 +1007,7 @@ def build_swing_scanner_df(data, sector_df):
         t1 = np.nan
         t2 = np.nan
         t3 = np.nan
+
         if pd.notna(last["ATR14"]) and last["ATR14"] > 0:
             atrv = float(last["ATR14"])
             stop = entry - 1.5 * atrv
@@ -1062,37 +1058,30 @@ def build_swing_scanner_df(data, sector_df):
     out = pd.DataFrame(rows)
     out = out.merge(sector_df, on="Symbol", how="left")
 
-    # Add strict TradeOK / TradeRank based on filters
-    out = add_trade_filter_rank(out)
-
-    # keep only columns order
     out = out[[c for c in SWING_COLS if c in out.columns]]
 
-    # ranked view (now uses TradeOK + TradeRank too)
-    ranked = out.sort_values(
-        ["TradeOK", "TradeRank", "SwingScore", "ValueTraded"],
-        ascending=[False, True, False, False]
-    )
+    # NEW: add TradeOK / FilterPassCount / TradeRank (fixed)
+    out = add_trade_filter_rank(out)
+    # ensure columns order
+    out = out[[c for c in SWING_COLS if c in out.columns]]
+
+    ranked = out.sort_values(["SwingScore","ValueTraded"], ascending=[False, False])
 
     buy = ranked[ranked["SwingCategory"] == "BUY"].copy()
     watch = ranked[ranked["SwingCategory"] == "WATCH"].copy()
     avoid = ranked[ranked["SwingCategory"] == "AVOID"].copy()
 
-    # top sheet shows best actionable first
-    top = ranked.head(SWING_OUT_TOP_N)
-
-    return buy, watch, avoid, top
+    return buy, watch, avoid, ranked.head(SWING_OUT_TOP_N)
 
 
 # =========================
-# CIRCUIT WATCHLIST (UNCHANGED)
+# CIRCUIT WATCHLIST
 # =========================
 def build_circuit_watchlist(df):
     if df.empty:
         return df.copy(), df.copy()
 
     x = df.copy()
-
     x["UpperCircuitPrice"] = x["Close"] * 1.10
     x["LowerCircuitPrice"] = x["Close"] * 0.90
 
@@ -1182,14 +1171,11 @@ def main():
 
     sector_df = load_sector_master(SECTOR_FILE)
 
-    # existing signals
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
-
-    # circuit sheets (use df7 for short-term)
     up_watch, down_watch = build_circuit_watchlist(df7)
 
-    # swing scanner
+    # Swing scanner
     swing_buy, swing_watch, swing_avoid, swing_ranked = build_swing_scanner_df(data, sector_df)
 
     wb = Workbook()
@@ -1215,7 +1201,7 @@ def main():
         "UpCircuitScore":"0",
         "DownCircuitScore":"0",
 
-        # Swing formats
+        # Swing
         "SwingScore":"0",
         "VWAP":"#,##0.00",
         "VWAP_Dist%":"0.00",
@@ -1238,7 +1224,7 @@ def main():
         "TradeRank":"0",
     }
 
-    # Sheet 1: Signals_7D
+    # Signals_7D
     wb.active.title = "Signals_7D"
     ws1 = wb["Signals_7D"]
     write_table(ws1, df7, "Signals7DTbl", header_color="1F4E79")
@@ -1248,7 +1234,7 @@ def main():
     color_scale(ws1, "EarlyScore")
     color_scale(ws1, "FalseBreakoutScore")
 
-    # Sheet 2: Signals_15D
+    # Signals_15D
     ws2 = wb.create_sheet("Signals_15D")
     write_table(ws2, df15, "Signals15DTbl", header_color="1F4E79")
     number_format(ws2, fmt_map)
@@ -1257,7 +1243,7 @@ def main():
     color_scale(ws2, "EarlyScore")
     color_scale(ws2, "FalseBreakoutScore")
 
-    # Sheet 3: Circuit_UP_Tomorrow
+    # Circuit UP
     ws3 = wb.create_sheet("Circuit_UP_Tomorrow")
     write_table(ws3, up_watch, "CircuitUpTbl", header_color="2E7D32")
     number_format(ws3, fmt_map)
@@ -1267,7 +1253,7 @@ def main():
     color_scale(ws3, "RET4_%")
     apply_row_fill_by_value(ws3, "CircuitPick", "UP", "E8F5E9")
 
-    # Sheet 4: Circuit_DOWN_Tomorrow
+    # Circuit DOWN
     ws4 = wb.create_sheet("Circuit_DOWN_Tomorrow")
     write_table(ws4, down_watch, "CircuitDownTbl", header_color="B71C1C")
     number_format(ws4, fmt_map)
@@ -1284,6 +1270,7 @@ def main():
     color_scale(ws5, "SwingScore")
     color_scale(ws5, "TradeRank")
     apply_row_fill_by_value(ws5, "SwingCategory", "BUY", "E8F5E9")
+    apply_row_fill_by_value(ws5, "TradeOK", True, "E8F5E9")
 
     ws6 = wb.create_sheet("Swing_WATCH_3_10D")
     write_table(ws6, swing_watch, "SwingWatchTbl", header_color="F9A825")
@@ -1302,7 +1289,6 @@ def main():
     number_format(ws8, fmt_map)
     color_scale(ws8, "SwingScore")
     color_scale(ws8, "TradeRank")
-    color_scale(ws8, "FilterPassCount")
 
     wb.save(out_path)
     print(f"✅ Excel created (Signals + Circuits + Swing 3–10D + TradeRank): {out_path}")
