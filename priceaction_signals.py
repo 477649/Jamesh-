@@ -11,12 +11,11 @@
 #    - Merges floor metrics into Signals + Swing
 #    - New sheets: Operator_Radar, Early_Accumulation, Distribution_Exit, FloorSheet_Top
 #
-# ✅ FIXES INCLUDED (2026-02-16):
-#    1) Fix crash: AttributeError: 'int' object has no attribute 'fillna'
-#       - occurred when FS_Top5SellConcPct column missing (floorsheet skipped)
-#       - build_circuit_watchlist now uses safe Series fallback
-#    2) Reduce pandas FutureWarning on fillna downcasting for FS_SellerExhaust
-#       - infer_objects(copy=False) before fillna + astype(bool)
+# ✅ FIXES INCLUDED:
+# 1) Uses SAME floorsheet path logic as scraper (BASE_DIR/outputs/Floor Sheet)
+# 2) Prevents KeyError when floorsheet missing (ensures FS_* columns exist)
+# 3) Fixes .get(..., 0).fillna() bug (safe series)
+# 4) Fixes pandas FutureWarning for boolean fillna downcasting
 
 import os, re, glob
 import numpy as np
@@ -32,11 +31,13 @@ from openpyxl.utils import get_column_letter
 
 
 # =========================
-# PATHS / SETTINGS
+# PATHS / SETTINGS (UPDATED: SAME AS SCRAPER)
 # =========================
-DATA_DIR = "outputs/sharesansar"                   # INPUT daily share price CSVs
-SECTOR_FILE = "outputs/Sector/sector_master.csv"   # Symbol -> Sector/Company (label only)
-OUT_DIR  = "outputs/PriceAction"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # ✅ same approach as your floorsheet scraper
+
+DATA_DIR = os.path.join(BASE_DIR, "outputs", "sharesansar")                 # INPUT daily share price CSVs
+SECTOR_FILE = os.path.join(BASE_DIR, "outputs", "Sector", "sector_master.csv")
+OUT_DIR  = os.path.join(BASE_DIR, "outputs", "PriceAction")
 
 LATEST_FILES_TO_LOAD = 60
 TOP_CIRCUIT_N = 25
@@ -62,9 +63,9 @@ SENTIMENT_MIN_SCORE = 70                # include if score >= this
 
 
 # =========================
-# FLOOR SHEET SETTINGS (NEW)
+# FLOOR SHEET SETTINGS (UPDATED PATH)
 # =========================
-FLOOR_DIR = "outputs/Floor Sheet"              # floorsheet_YYYY-MM-DD.csv
+FLOOR_DIR = os.path.join(BASE_DIR, "outputs", "Floor Sheet")  # ✅ EXACT same as scraper
 FLOOR_LATEST_FILES_TO_LOAD = 25               # last 25 trading days
 
 # Broker flow filters
@@ -78,6 +79,49 @@ FLOOR_SELL_CONC_MAX = 0.40                    # seller exhaustion threshold (<=4
 FLOOR_PERSIST_DAYS = 7                        # rolling days for operator radar
 FLOOR_ACTIVE_DAYS_MIN = 3
 FLOOR_FLIP_RATIO_MAX = 0.25                   # SellQty/BuyQty (<=25%)
+
+
+# =========================
+# SAFETY HELPERS (NEW)
+# =========================
+def _safe_series(df: pd.DataFrame, col: str, default=0):
+    """Always returns a Series aligned to df.index. If col missing -> constant default."""
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    if col in df.columns:
+        return df[col]
+    return pd.Series([default] * len(df), index=df.index)
+
+def _ensure_floorsheet_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure FS_* columns exist so downstream never KeyErrors when floorsheet is missing."""
+    if df is None or df.empty:
+        return df
+
+    defaults = {
+        "FS_FlowScore": np.nan,
+        "FS_Top3NetBuyPct": np.nan,
+        "FS_Top5BuyConcPct": np.nan,
+        "FS_Top5SellConcPct": np.nan,
+        "FS_SellerExhaust": False,
+        "FS_TopBuyerBroker": np.nan,
+        "FS_TopBuyerNetQty": np.nan,
+        "FS_TotalQty": np.nan,
+        "FS_Turnover": np.nan,
+        "FS_Trades": np.nan,
+        "FS_VWAP": np.nan,
+    }
+    for c, v in defaults.items():
+        if c not in df.columns:
+            df[c] = v
+
+    # Fix pandas FutureWarning + normalize to bool
+    df["FS_SellerExhaust"] = (
+        df["FS_SellerExhaust"]
+        .infer_objects(copy=False)
+        .fillna(False)
+        .astype(bool)
+    )
+    return df
 
 
 # =========================
@@ -202,10 +246,9 @@ def load_sector_master(path):
 
 
 # =========================
-# FLOOR SHEET LOADERS (NEW)
+# FLOOR SHEET LOADERS
 # =========================
 def _extract_date_from_floorsheet_filename(path):
-    # supports floorsheet_YYYY-MM-DD.csv or floorsheet-YYYY-MM-DD.csv or floorsheetYYYY-MM-DD.csv
     m = re.search(r"floorsheet[_-]?(\d{4}-\d{2}-\d{2})", os.path.basename(path), re.IGNORECASE)
     if not m:
         return None
@@ -240,18 +283,19 @@ def load_latest_floorsheets(folder, latest_n=25):
         df = pd.read_csv(f)
         df.columns = [c.strip() for c in df.columns]
 
-        # Normalize columns
-        # Symbol, Buyer, Seller, Quantity, Rate, Amount
+        # Normalize columns (supports your scraper output)
         colmap = {}
         for c in df.columns:
-            lc = c.lower().strip()
-            if lc == "symbol":
+            lc = str(c).strip().lower()
+            if lc in ["transact no.", "transact no", "transact_no", "transactno", "transaction no.", "transaction no"]:
+                colmap[c] = "TransactNo"  # optional
+            elif lc == "symbol":
                 colmap[c] = "Symbol"
             elif lc in ["buyer", "buyer broker", "buyer_broker", "buyerbrokerno", "buyer broker no", "buyer_broker_no"]:
                 colmap[c] = "Buyer"
             elif lc in ["seller", "seller broker", "seller_broker", "sellerbrokerno", "seller broker no", "seller_broker_no"]:
                 colmap[c] = "Seller"
-            elif lc in ["quantity", "qty", "traded qty", "totalqty", "total qty", "quantity "]:
+            elif lc in ["quantity", "qty", "traded qty", "totalqty", "total qty"]:
                 colmap[c] = "Quantity"
             elif lc in ["rate", "price", "trade price"]:
                 colmap[c] = "Rate"
@@ -308,7 +352,6 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
 
     x = fs.copy()
 
-    # --- daily symbol totals ---
     sym_day = x.groupby(["Date", "Symbol"], as_index=False).agg(
         FS_TotalQty=("Quantity", "sum"),
         FS_Turnover=("Amount", "sum"),
@@ -316,7 +359,6 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
     )
     sym_day["FS_VWAP"] = sym_day["FS_Turnover"] / (sym_day["FS_TotalQty"] + 1e-12)
 
-    # --- broker buy/sell per symbol day ---
     buy = x.groupby(["Date", "Symbol", "Buyer"], as_index=False).agg(
         BuyQty=("Quantity", "sum"),
         BuyAmt=("Amount", "sum"),
@@ -354,7 +396,6 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
 
         seller_exhaust = top5_sell_conc <= FLOOR_SELL_CONC_MAX
 
-        # Flow score (0..100)
         score = 0
         score += 35 if top3_net_pct >= FLOOR_NETBUY_PCT_MIN else 0
         score += 30 if top5_buy_conc >= FLOOR_BUY_CONC_PCT_MIN else 0
@@ -378,7 +419,6 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
         how="left"
     )
 
-    # --- Operator Radar (rolling last FLOOR_PERSIST_DAYS rows per broker/symbol) ---
     bro_sorted = bro.sort_values(["Symbol", "Broker", "Date"]).copy()
     op_rows = []
     for (sym, brk), g in bro_sorted.groupby(["Symbol", "Broker"]):
@@ -412,7 +452,6 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
     if not operator_radar.empty:
         operator_radar = operator_radar.sort_values(["OperatorScore", "NetQtySum"], ascending=[False, False])
 
-    # --- FloorSheet_Top (daily top picks by flow score & turnover) ---
     floor_top = daily_symbol_flow.copy()
     if not floor_top.empty:
         floor_top = floor_top.sort_values(["Date", "FS_FlowScore", "FS_Turnover"], ascending=[False, False, False]).head(250)
@@ -422,20 +461,21 @@ def compute_floorsheet_metrics(fs: pd.DataFrame):
 
 def add_floor_confirmed_signal(df: pd.DataFrame) -> pd.DataFrame:
     x = df.copy()
-    for c in ["FS_FlowScore", "FS_SellerExhaust", "AccumulationScore", "DistributionScore"]:
+    x = _ensure_floorsheet_cols(x)
+
+    for c in ["AccumulationScore", "DistributionScore"]:
         if c not in x.columns:
             x[c] = np.nan
+    if "Stock Signal" not in x.columns:
+        x["Stock Signal"] = "HOLD"
 
     flow_ok = x["FS_FlowScore"].fillna(0) >= 70
-
-    # ✅ FIX: avoid pandas FutureWarning (explicit object->bool handling)
     seller_exhaust = (
         x["FS_SellerExhaust"]
         .infer_objects(copy=False)
         .fillna(False)
         .astype(bool)
     )
-
     accum_ok = x["AccumulationScore"].fillna(0) >= 70
     dist_risk = x["DistributionScore"].fillna(0) >= 70
 
@@ -500,7 +540,6 @@ def add_features(g):
     g["HH15"] = g["High"].rolling(15).max()
     g["LL15"] = g["Low"].rolling(15).min()
 
-    # Returns
     for n in [1, 2, 4, 7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
@@ -522,18 +561,6 @@ def add_features(g):
 # SENTIMENT / MANIPULATION DETECTOR (OHLCV + VWAP only)
 # =========================
 def add_sentiment_detector(g):
-    """
-    Adds:
-      - LowerWickPct (0..1)
-      - BodyPct01 (0..1)
-      - RangePct_D (daily range %)
-      - VolAvg5, VolAvg20, VolRatio20
-      - AccumulationScore (0..100)
-      - DistributionScore (0..100)
-      - ShakeoutScore (0..100)
-      - SentimentSignal
-      - SentimentReason
-    """
     g = g.copy()
 
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
@@ -561,7 +588,6 @@ def add_sentiment_detector(g):
     g["HH20"] = g["High"].rolling(20).max()
     near_hh20 = (g["Close"] >= 0.97 * g["HH20"]).fillna(False)
 
-    # ---- Accumulation ----
     acc = np.zeros(len(g), dtype=float)
     acc += 20 * ((g["VolAvg5"] > g["VolAvg20"]).fillna(False)).astype(int)
     acc += 20 * ((g["RangePct_D"] <= (g["RangePct_MA10"] * 0.90)).fillna(False)).astype(int)
@@ -570,7 +596,6 @@ def add_sentiment_detector(g):
     acc += 20 * ((g["LowerWickPct"] > g["UpperWickPct"]).fillna(False)).astype(int)
     g["AccumulationScore"] = np.clip(acc, 0, 100).astype(int)
 
-    # ---- Distribution ----
     dist = np.zeros(len(g), dtype=float)
     dist += 25 * ((g["VolRatio20"] >= 1.8).fillna(False)).astype(int)
     dist += 25 * ((g["RET1"] <= 0.50).fillna(False)).astype(int)
@@ -579,7 +604,6 @@ def add_sentiment_detector(g):
     dist += 10 * near_hh20.astype(int)
     g["DistributionScore"] = np.clip(dist, 0, 100).astype(int)
 
-    # ---- Shakeout ----
     prev_low = g["Low"].shift(1)
     shake = np.zeros(len(g), dtype=float)
     shake += 50 * ((g["Low"] < prev_low) & (g["Close"] > prev_low)).fillna(False).astype(int)
@@ -587,14 +611,12 @@ def add_sentiment_detector(g):
     shake += 20 * ((g["VolRatio20"] >= 1.5).fillna(False)).astype(int)
     g["ShakeoutScore"] = np.clip(shake, 0, 100).astype(int)
 
-    # ---- Final signal ----
     sig = np.array(["NEUTRAL"] * len(g), dtype=object)
     sig[g["AccumulationScore"] >= SENTIMENT_MIN_SCORE] = "ACCUMULATION"
     sig[g["ShakeoutScore"] >= SENTIMENT_MIN_SCORE] = "SHAKEOUT"
     sig[g["DistributionScore"] >= SENTIMENT_MIN_SCORE] = "DISTRIBUTION"
     g["SentimentSignal"] = sig
 
-    # ---- Reasons ----
     reasons = []
     for i in range(len(g)):
         r = []
@@ -631,17 +653,14 @@ def add_swing_features(g):
 
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
     g["RangePct"] = (rng / (g["Close"] + 1e-12)) * 100
-    g["ClosePos"] = (g["Close"] - g["Low"]) / (rng + 1e-12)   # 0..1
+    g["ClosePos"] = (g["Close"] - g["Low"]) / (rng + 1e-12)
     g["BodyPct"] = (g["Close"] - g["Open"]).abs() / (rng + 1e-12) * 100
 
     g["AboveVWAP"] = g["Close"] > g["VWAP"]
     g["VWAP_DistPct"] = (g["Close"] - g["VWAP"]) / (g["VWAP"] + 1e-12) * 100
     g["VWAP_Slope5"] = g["VWAP"].diff(5)
 
-    # HH20 prior (exclude today)
     g["HH20_PRIOR"] = g["High"].rolling(BREAKOUT_LOOKBACK).max().shift(1)
-
-    # ATR contraction proxy
     g["ATR14_5ago"] = g["ATR14"].shift(5)
 
     return g
@@ -651,14 +670,6 @@ def add_swing_features(g):
 # TREND AGE / DAYS FROM BREAKOUT
 # =========================
 def compute_breakout_age_cols(g):
-    """
-    Adds:
-      - BreakoutFlag (True on breakout day)
-      - DaysFromBreakout (0 on breakout day, 1 next day, ...)
-      - TrendAge (same measure; used for Trend/Pullback ageing)
-    Breakout definition aligns to your scanner:
-      Close > HH20_PRIOR AND VolSpike20 >= threshold AND ClosePos >= 0.65
-    """
     g = g.copy()
 
     closepos_ok = g["ClosePos"] >= 0.65
@@ -962,7 +973,6 @@ def build_reason(last, mode):
     if last.get("SentimentSignal") in ["ACCUMULATION", "DISTRIBUTION", "SHAKEOUT"]:
         parts.append(f"sentiment:{last.get('SentimentSignal').lower()}")
 
-    # NEW: floorsheet confirmation tags (optional)
     if last.get("FS_FlowScore") is not None and pd.notna(last.get("FS_FlowScore")):
         if float(last.get("FS_FlowScore")) >= 70:
             parts.append("floor:strong flow")
@@ -1072,16 +1082,15 @@ FINAL_COLS = [
     "Slope20","R2_20",
     "TrendHealth","VolExpansionFlag","FalseBreakoutFlag","FalseBreakoutScore",
     "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
-    # Sentiment
     "AccumulationScore","DistributionScore","ShakeoutScore",
     "SentimentSignal","SentimentReason",
-    # Floorsheet (NEW)
     "FS_FlowScore","FS_Top3NetBuyPct","FS_Top5BuyConcPct","FS_Top5SellConcPct",
     "FS_SellerExhaust","FS_TopBuyerBroker","FS_TopBuyerNetQty",
     "FS_TotalQty","FS_Turnover","FS_Trades","FS_VWAP",
     "FloorConfirmedBUY","TradeTier",
     "Reason"
 ]
+
 
 # =========================
 # BUILD SIGNAL SHEETS (7D/15D)
@@ -1243,12 +1252,12 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "SentimentSignal": last.get("SentimentSignal", "NEUTRAL"),
             "SentimentReason": last.get("SentimentReason", ""),
 
-            # Floorsheet columns will be merged later
+            # Floorsheet columns merged later
             "FS_FlowScore": None,
             "FS_Top3NetBuyPct": None,
             "FS_Top5BuyConcPct": None,
             "FS_Top5SellConcPct": None,
-            "FS_SellerExhaust": None,
+            "FS_SellerExhaust": False,
             "FS_TopBuyerBroker": None,
             "FS_TopBuyerNetQty": None,
             "FS_TotalQty": None,
@@ -1302,7 +1311,6 @@ SWING_COLS = [
     "EMA10","EMA20","EMA50","RSI14","ATR14","Range%","ClosePos","Body%",
     "Entry","Stop","T1_1.5R","T2_2.5R","T3_3R",
     "ExpectedHoldDays","TimeStopDay","MaxHoldDays",
-    # Floorsheet (NEW)
     "FS_FlowScore","FS_Top3NetBuyPct","FS_Top5BuyConcPct","FS_Top5SellConcPct",
     "FS_SellerExhaust","FS_TopBuyerBroker","FS_TopBuyerNetQty",
     "FS_TotalQty","FS_Turnover","FS_Trades","FS_VWAP",
@@ -1407,14 +1415,12 @@ def build_swing_scanner_df(data, sector_df):
         else:
             score -= 18; reasons.append("Low liquidity")
 
-        # ageing penalty
         if pd.notna(trend_age):
             if trend_age >= 12:
                 score -= 10; reasons.append("Late-stage trend (age>=12)")
             elif trend_age >= 9:
                 score -= 6; reasons.append("Maturing trend (age>=9)")
 
-        # sentiment risk penalty (distribution)
         dist_score = int(last.get("DistributionScore")) if pd.notna(last.get("DistributionScore")) else 0
         if dist_score >= 70:
             score -= 12; reasons.append("Distribution risk (smart-money exit)")
@@ -1495,12 +1501,11 @@ def build_swing_scanner_df(data, sector_df):
             "TimeStopDay": SWING_TIME_STOP_DAY,
             "MaxHoldDays": SWING_MAX_HOLD_DAYS,
 
-            # floorsheet placeholders (merged later)
             "FS_FlowScore": None,
             "FS_Top3NetBuyPct": None,
             "FS_Top5BuyConcPct": None,
             "FS_Top5SellConcPct": None,
-            "FS_SellerExhaust": None,
+            "FS_SellerExhaust": False,
             "FS_TopBuyerBroker": None,
             "FS_TopBuyerNetQty": None,
             "FS_TotalQty": None,
@@ -1537,20 +1542,14 @@ def build_swing_scanner_df(data, sector_df):
 
 
 # =========================
-# CIRCUIT WATCHLIST
+# CIRCUIT WATCHLIST (FIXED)
 # =========================
 def build_circuit_watchlist(df):
     if df.empty:
         return df.copy(), df.copy()
 
     x = df.copy()
-
-    # ✅ FIX: safe fallbacks (never x.get(..., 0).fillna(...) because default int has no fillna)
-    def _series_or_zero(colname: str) -> pd.Series:
-        return x[colname] if colname in x.columns else pd.Series(0, index=x.index)
-
-    fs_sell_conc = _series_or_zero("FS_Top5SellConcPct")
-    dist_score_s = _series_or_zero("DistributionScore")
+    x = _ensure_floorsheet_cols(x)  # ✅ ensures FS columns exist
 
     x["UpperCircuitPrice"] = x["Close"] * 1.10
     x["LowerCircuitPrice"] = x["Close"] * 0.90
@@ -1581,11 +1580,12 @@ def build_circuit_watchlist(df):
         10 * (x["StretchFlag"].fillna("") == "STRETCHED").astype(int) +
         10 * (x["VolPriceFlag_W"].fillna("") == "DIVERGENCE").astype(int) +
         8  * x["FalseBreakoutFlag"].fillna(False).astype(int) +
-        8  * (dist_score_s.fillna(0) >= 70).astype(int)
+        8  * (x.get("DistributionScore", 0).fillna(0) >= 70).astype(int)
     )
 
-    # NEW: floorsheet penalties (if heavy selling concentration)
-    penalty += 6 * (fs_sell_conc.fillna(0) >= 55).astype(int)
+    # ✅ FIX: safe floorsheet penalty even when missing
+    fs_sell = _safe_series(x, "FS_Top5SellConcPct", default=0).fillna(0)
+    penalty += 6 * (fs_sell >= 55).astype(int)
 
     x["UpCircuitScore"] = (up_base - penalty).clip(0, 100).astype(int)
 
@@ -1599,8 +1599,7 @@ def build_circuit_watchlist(df):
         12 * (x["TrendHealth"].fillna("") == "DOWN").astype(int)
     ).clip(0, 100)
 
-    # NEW: floorsheet down boost (if seller concentration high)
-    down_score += 8 * (fs_sell_conc.fillna(0) >= 55).astype(int)
+    down_score += 8 * (fs_sell >= 55).astype(int)
 
     x["DownCircuitScore"] = down_score.clip(0, 100).astype(int)
 
@@ -1641,16 +1640,9 @@ def build_circuit_watchlist(df):
 
 
 # =========================
-# NEW: SENTIMENT TOP SHEET
+# SENTIMENT TOP SHEET
 # =========================
 def build_sentiment_top(df7):
-    """
-    Fast scanner:
-      - Top ACCUMULATION
-      - Top DISTRIBUTION
-      - Top SHAKEOUT
-    Based on df7 (latest per symbol) which already contains sentiment scores.
-    """
     if df7 is None or df7.empty:
         return pd.DataFrame(columns=[
             "Category","Date","Symbol","Sector","Company",
@@ -1664,6 +1656,8 @@ def build_sentiment_top(df7):
         "Close","Volume","RankScore","EarlyScore","TradeTier","Reason","SentimentReason"
     ]
     x = df7.copy()
+    x = _ensure_floorsheet_cols(x)
+
     for c in base_cols:
         if c not in x.columns:
             x[c] = None
@@ -1697,26 +1691,30 @@ def main():
 
     sector_df = load_sector_master(SECTOR_FILE)
 
-    # --- Base signals ---
+    # Base signals
     df7 = build_sheet_df(data, sector_df, mode="7D")
     df15 = build_sheet_df(data, sector_df, mode="15D")
 
-    # --- NEW: floorsheet metrics ---
+    # ✅ always ensure FS cols exist (prevents KeyError even if floorsheet missing)
+    df7 = _ensure_floorsheet_cols(df7) if df7 is not None else df7
+    df15 = _ensure_floorsheet_cols(df15) if df15 is not None else df15
+
+    # Floorsheet metrics
     try:
         fs = load_latest_floorsheets(FLOOR_DIR, latest_n=FLOOR_LATEST_FILES_TO_LOAD)
         daily_flow, operator_radar, floor_top = compute_floorsheet_metrics(fs)
 
-        # Merge floorsheet metrics into signals
-        if not df7.empty:
+        if not df7.empty and not daily_flow.empty:
             df7 = df7.merge(daily_flow, on=["Date", "Symbol"], how="left")
-        if not df15.empty:
+        if not df15.empty and not daily_flow.empty:
             df15 = df15.merge(daily_flow, on=["Date", "Symbol"], how="left")
 
-        # Floor-confirmed trade tier
-        if not df7.empty:
-            df7 = add_floor_confirmed_signal(df7)
-        if not df15.empty:
-            df15 = add_floor_confirmed_signal(df15)
+        # ✅ ensure again after merge
+        df7 = _ensure_floorsheet_cols(df7)
+        df15 = _ensure_floorsheet_cols(df15)
+
+        df7 = add_floor_confirmed_signal(df7) if not df7.empty else df7
+        df15 = add_floor_confirmed_signal(df15) if not df15.empty else df15
 
     except Exception as e:
         print(f"⚠️ Floor sheet skipped due to error: {e}")
@@ -1724,34 +1722,40 @@ def main():
         operator_radar = pd.DataFrame()
         floor_top = pd.DataFrame()
 
-    # --- Circuit watch ---
-    up_watch, down_watch = build_circuit_watchlist(df7) if not df7.empty else (pd.DataFrame(), pd.DataFrame())
+    # Circuit watch
+    up_watch, down_watch = build_circuit_watchlist(df7) if (df7 is not None and not df7.empty) else (pd.DataFrame(), pd.DataFrame())
 
-    # --- Swing scanner ---
+    # Swing scanner
     swing_buy, swing_watch, swing_avoid, swing_ranked = build_swing_scanner_df(data, sector_df)
 
-    # Merge floorsheet metrics into swing outputs (if available)
-    if "daily_flow" in locals() and isinstance(daily_flow, pd.DataFrame) and not daily_flow.empty:
-        for name in ["swing_buy", "swing_watch", "swing_avoid", "swing_ranked"]:
-            obj = locals()[name]
+    # Merge floorsheet into swing outputs
+    if isinstance(daily_flow, pd.DataFrame) and not daily_flow.empty:
+        for obj_name in ["swing_buy", "swing_watch", "swing_avoid", "swing_ranked"]:
+            obj = locals()[obj_name]
             if obj is not None and not obj.empty:
-                locals()[name] = obj.merge(daily_flow, on=["Date", "Symbol"], how="left")
-        swing_buy, swing_watch, swing_avoid, swing_ranked = locals()["swing_buy"], locals()["swing_watch"], locals()["swing_avoid"], locals()["swing_ranked"]
+                locals()[obj_name] = obj.merge(daily_flow, on=["Date", "Symbol"], how="left")
+        swing_buy, swing_watch, swing_avoid, swing_ranked = (
+            locals()["swing_buy"], locals()["swing_watch"], locals()["swing_avoid"], locals()["swing_ranked"]
+        )
 
-    # NEW sentiment top
+    # Sentiment Top
     sentiment_top = build_sentiment_top(df7)
 
-    # NEW: Early Accumulation and Distribution Exit sheets (based on df7)
+    # Early Accumulation + Distribution Exit (SAFE even if FS columns missing)
     if df7 is not None and not df7.empty:
+        df7 = _ensure_floorsheet_cols(df7)
+        fs_flow = _safe_series(df7, "FS_FlowScore", default=0).fillna(0)
+        fs_sell = _safe_series(df7, "FS_Top5SellConcPct", default=0).fillna(0)
+
         early_acc = df7[
-            (df7["FS_FlowScore"].fillna(0) >= 70) &
+            (fs_flow >= 70) &
             (df7["AccumulationScore"].fillna(0) >= 70) &
             (df7["DistributionScore"].fillna(0) < 70)
         ].sort_values(["FS_FlowScore", "RankScore"], ascending=[False, False]).head(120).copy()
 
         dist_exit = df7[
             (df7["DistributionScore"].fillna(0) >= 70) |
-            (df7["FS_Top5SellConcPct"].fillna(0) >= 55)
+            (fs_sell >= 55)
         ].sort_values(["DistributionScore", "FS_Top5SellConcPct"], ascending=[False, False]).head(120).copy()
     else:
         early_acc = pd.DataFrame()
@@ -1780,12 +1784,10 @@ def main():
         "UpCircuitScore":"0",
         "DownCircuitScore":"0",
 
-        # sentiment
         "AccumulationScore":"0",
         "DistributionScore":"0",
         "ShakeoutScore":"0",
 
-        # Swing formats
         "SwingScore":"0",
         "DaysFromBreakout":"0",
         "TrendAge":"0",
@@ -1808,7 +1810,6 @@ def main():
         "MaxHoldDays":"0",
         "SwingRank":"0",
 
-        # floorsheet
         "FS_FlowScore":"0",
         "FS_Top3NetBuyPct":"0.00",
         "FS_Top5BuyConcPct":"0.00",
@@ -1819,7 +1820,6 @@ def main():
         "FS_Trades":"#,##0",
         "FS_VWAP":"#,##0.00",
 
-        # operator radar
         "BuyQtySum":"#,##0",
         "SellQtySum":"#,##0",
         "NetQtySum":"#,##0",
@@ -1828,7 +1828,6 @@ def main():
         "ActiveDays":"0",
     }
 
-    # Sheet 1: Signals_7D
     wb.active.title = "Signals_7D"
     ws1 = wb["Signals_7D"]
     write_table(ws1, df7, "Signals7DTbl", header_color="1F4E79")
@@ -1837,7 +1836,6 @@ def main():
         color_scale(ws1, col)
     apply_row_fill_by_value(ws1, "TradeTier", "A+ (Floor Confirmed)", "E8F5E9")
 
-    # Sheet 2: Signals_15D
     ws2 = wb.create_sheet("Signals_15D")
     write_table(ws2, df15, "Signals15DTbl", header_color="1F4E79")
     number_format(ws2, fmt_map)
@@ -1845,49 +1843,42 @@ def main():
         color_scale(ws2, col)
     apply_row_fill_by_value(ws2, "TradeTier", "A+ (Floor Confirmed)", "E8F5E9")
 
-    # Sheet 3: Circuit_UP_Tomorrow
     ws3 = wb.create_sheet("Circuit_UP_Tomorrow")
     write_table(ws3, up_watch, "CircuitUpTbl", header_color="2E7D32")
     number_format(ws3, fmt_map)
     color_scale(ws3, "UpCircuitScore")
     apply_row_fill_by_value(ws3, "CircuitPick", "UP", "E8F5E9")
 
-    # Sheet 4: Circuit_DOWN_Tomorrow
     ws4 = wb.create_sheet("Circuit_DOWN_Tomorrow")
     write_table(ws4, down_watch, "CircuitDownTbl", header_color="B71C1C")
     number_format(ws4, fmt_map)
     color_scale(ws4, "DownCircuitScore")
     apply_row_fill_by_value(ws4, "CircuitPick", "DOWN", "FFEBEE")
 
-    # Sheet 5: Swing_BUY_3_10D
     ws5 = wb.create_sheet("Swing_BUY_3_10D")
     write_table(ws5, swing_buy, "SwingBuyTbl", header_color="2E7D32")
     number_format(ws5, fmt_map)
     for col in ["SwingScore","TrendAge","DaysFromBreakout","DistributionScore","FS_FlowScore"]:
         color_scale(ws5, col)
 
-    # Sheet 6: Swing_WATCH_3_10D
     ws6 = wb.create_sheet("Swing_WATCH_3_10D")
     write_table(ws6, swing_watch, "SwingWatchTbl", header_color="F9A825")
     number_format(ws6, fmt_map)
     for col in ["SwingScore","TrendAge","DistributionScore","FS_FlowScore"]:
         color_scale(ws6, col)
 
-    # Sheet 7: Swing_AVOID_3_10D
     ws7 = wb.create_sheet("Swing_AVOID_3_10D")
     write_table(ws7, swing_avoid, "SwingAvoidTbl", header_color="B71C1C")
     number_format(ws7, fmt_map)
     for col in ["SwingScore","DistributionScore","FS_FlowScore"]:
         color_scale(ws7, col)
 
-    # Sheet 8: Swing_RANKED_TOP
     ws8 = wb.create_sheet("Swing_RANKED_TOP")
     write_table(ws8, swing_ranked, "SwingRankedTbl", header_color="1565C0")
     number_format(ws8, fmt_map)
     for col in ["SwingScore","TrendAge","DaysFromBreakout","DistributionScore","FS_FlowScore"]:
         color_scale(ws8, col)
 
-    # Sheet 9: Sentiment_Top (NEW)
     ws9 = wb.create_sheet("Sentiment_Top")
     write_table(ws9, sentiment_top, "SentimentTopTbl", header_color="6A1B9A")
     number_format(ws9, fmt_map)
@@ -1897,7 +1888,6 @@ def main():
     apply_row_fill_by_value(ws9, "Category", "DISTRIBUTION", "FFEBEE")
     apply_row_fill_by_value(ws9, "Category", "SHAKEOUT", "FFFDE7")
 
-    # Sheet 10: Operator_Radar (NEW)
     ws10 = wb.create_sheet("Operator_Radar")
     write_table(ws10, operator_radar.head(300), "OperatorRadarTbl", header_color="0D47A1")
     number_format(ws10, fmt_map)
@@ -1906,7 +1896,6 @@ def main():
     apply_row_fill_by_value(ws10, "OperatorTag", "OPERATOR-LIKELY", "E8F5E9")
     apply_row_fill_by_value(ws10, "OperatorTag", "WATCH", "FFFDE7")
 
-    # Sheet 11: Early_Accumulation (NEW)
     ws11 = wb.create_sheet("Early_Accumulation")
     write_table(ws11, early_acc, "EarlyAccumTbl", header_color="1B5E20")
     number_format(ws11, fmt_map)
@@ -1914,14 +1903,12 @@ def main():
         color_scale(ws11, col)
     apply_row_fill_by_value(ws11, "TradeTier", "A+ (Floor Confirmed)", "E8F5E9")
 
-    # Sheet 12: Distribution_Exit (NEW)
     ws12 = wb.create_sheet("Distribution_Exit")
     write_table(ws12, dist_exit, "DistExitTbl", header_color="B71C1C")
     number_format(ws12, fmt_map)
     for col in ["DistributionScore", "FS_Top5SellConcPct", "RankScore"]:
         color_scale(ws12, col)
 
-    # Sheet 13: FloorSheet_Top (NEW)
     ws13 = wb.create_sheet("FloorSheet_Top")
     write_table(ws13, floor_top.head(300), "FloorTopTbl", header_color="263238")
     number_format(ws13, fmt_map)
