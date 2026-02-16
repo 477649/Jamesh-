@@ -1,9 +1,9 @@
 # priceaction_signals.py
-# âœ… Signals (7D/15D) + Circuits + Swing Scanner (3â€“10D)
-# âœ… Adds TrendAge + DaysFromBreakout (freshness + ageing)
-# âœ… Adds Smart-Money Sentiment Detector: Accumulation / Distribution / Shakeout
-# âœ… NEW: Sentiment_Top sheet (fast scan)
-# âœ… Loads latest available SharePrice_YYYY-MM-DD.csv files (<= today)
+# ✅ Signals (7D/15D) + Circuits + Swing Scanner (3–10D)
+# ✅ Adds TrendAge + DaysFromBreakout (freshness + ageing)
+# ✅ Adds Smart-Money Sentiment Detector: Accumulation / Distribution / Shakeout
+# ✅ NEW: Sentiment_Top sheet (fast scan)
+# ✅ Loads latest available SharePrice_YYYY-MM-DD.csv files (<= today)
 
 import os, re, glob
 import numpy as np
@@ -28,9 +28,9 @@ OUT_DIR  = "outputs/PriceAction"
 LATEST_FILES_TO_LOAD = 60
 TOP_CIRCUIT_N = 25
 
-# ---- Swing Scanner settings (NEPSE daily, ideal hold 3â€“10 trading days) ----
+# ---- Swing Scanner settings (NEPSE daily, ideal hold 3–10 trading days) ----
 SWING_OUT_TOP_N = 120
-SWING_MIN_HISTORY = 30                  # 30+ workable; 60â€“90 better
+SWING_MIN_HISTORY = 30                  # 30+ workable; 60–90 better
 SWING_VALUE_TRADED_MIN = 2_500_000      # liquidity filter (tune)
 SWING_VOL_SPIKE_BREAKOUT = 1.30         # breakout confirmation
 SWING_VOL_SPIKE_COMPRESSION = 1.40      # compression expansion
@@ -63,7 +63,7 @@ def _extract_date_from_filename(path):
 
 def load_latest_files(folder, latest_n=60):
     """
-    âœ… Loads latest available files up to *today* (not assuming yesterday exists).
+    ✅ Loads latest available files up to *today* (not assuming yesterday exists).
     Filenames must look like SharePrice_YYYY-MM-DD.csv
     """
     files = sorted(glob.glob(os.path.join(folder, "SharePrice_*.csv")))
@@ -328,7 +328,7 @@ def add_sentiment_detector(g):
 
 
 # =========================
-# SWING FEATURES (3â€“10D)
+# SWING FEATURES (3–10D)
 # =========================
 def add_swing_features(g):
     g = g.copy()
@@ -739,7 +739,7 @@ def color_scale(ws, col_name):
 
 
 def number_format(ws, mapping):
-    # âœ… FIXED (no typo)
+    # ✅ FIXED (no typo)
     header = [c.value for c in ws[1]]
     for col_name, fmt in mapping.items():
         if col_name in header:
@@ -1053,7 +1053,7 @@ def build_swing_scanner_df(data, sector_df):
         if trend_ok: score += 18; reasons.append("Close>EMA20")
         if trend_up: score += 8;  reasons.append("EMA20>EMA50")
         if vwap_ok:  score += 18; reasons.append("Close>VWAP & VWAP rising/flat")
-        if rsi_ok:   score += 10; reasons.append("RSI in 50â€“70")
+        if rsi_ok:   score += 10; reasons.append("RSI in 50–70")
         if closepos_ok: score += 8; reasons.append("Strong close")
         if body_ok: score += 4; reasons.append("Good candle body")
 
@@ -1063,23 +1063,23 @@ def build_swing_scanner_df(data, sector_df):
         if breakout_today:
             score += 22
             signal_type = "Breakout"
-            exp_hold = "3â€“6"
+            exp_hold = "3–6"
             reasons.append("20D breakout + volume")
         elif pullback and trend_ok and vwap_ok:
             score += 18
             signal_type = "Pullback"
-            exp_hold = "5â€“10"
+            exp_hold = "5–10"
             reasons.append("Pullback near EMA20 (ATR)")
         elif compression:
             score += 20
             signal_type = "Compression"
-            exp_hold = "4â€“8"
-            reasons.append("Compressionâ†’Expansion")
+            exp_hold = "4–8"
+            reasons.append("Compression→Expansion")
         else:
             if trend_ok and vwap_ok:
                 score += 8
                 signal_type = "Trend"
-                exp_hold = "3â€“10"
+                exp_hold = "3–10"
                 reasons.append("Trend continuation")
 
         if pd.notna(vol_spike) and vol_spike >= 1.2:
@@ -1484,7 +1484,7 @@ def main():
     apply_row_fill_by_value(ws9, "Category", "SHAKEOUT", "FFFDE7")
 
     wb.save(out_path)
-    print(f"âœ… Excel created (Signals + Circuits + Swing 3â€“10D + Sentiment_Top): {out_path}")
+    print(f"✅ Excel created (Signals + Circuits + Swing 3–10D + Sentiment_Top): {out_path}")
 
 
 if __name__ == "__main__":
