@@ -1,6 +1,17 @@
 # scripts/generate_trading_report.py
 # ------------------------------------------------------------
-# Advanced NEPSE Trading Insight Report (Excel) – Retail-Pro Edition
+# Advanced NEPSE Trading Insight Report (Excel) – Retail-Pro Edition (UPDATED)
+#
+# ✅ Updates added in this version (Smart Money accuracy upgrades):
+# 1) Net Amount (Buy - Sell) at broker-symbol and symbol level (Net_Amount_Cr)
+# 2) Better persistence:
+#    - NetBuy_Days (days broker is net buyer)
+#    - NetBuy_Ratio (NetBuy_Days / Traded_Days)
+#    - Max_Consec_NetBuy_Days (max consecutive net-buy streak)
+# 3) Broker Rotation Index (top buyers changing every day → suspicious)
+# 4) Absorption detection (high sell pressure but price holds above VWAP + strong close)
+# 5) Stronger CAUTION logic for “operator-control” + overheat + distribution traps
+#
 # Data sources (GitHub repo structure):
 # - outputs/Floor Sheet/floorsheet_YYYY-MM-DD.csv
 # - outputs/sharesansar/SharePrice_YYYY-MM-DD.csv
@@ -10,13 +21,6 @@
 #
 # Windows:
 # - 1D / 7D / 15D / 1M(30 trading days)
-#
-# Upgrades in this version:
-# - Dynamic Top-N for pressure (1D=4, 7D=5, 15D+=10)
-# - Volume Surge metrics (latest vs window-average)
-# - Volatility & candle strength metrics (range%, close position)
-# - Trade Setups sheet (actionable retail-friendly shortlist per window)
-# - Risk flags (operator pressure, sell-wall risk, weak follow-through)
 # ------------------------------------------------------------
 
 import re
@@ -62,7 +66,6 @@ FLOOR_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 PRICE_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 
 CRORE = 10_000_000
-
 
 # =========================
 # HELPERS
@@ -205,6 +208,21 @@ def zscore(s: pd.Series):
     return (s - s.mean()) / (std + 1e-9)
 
 
+def max_consecutive_true(mask: pd.Series) -> int:
+    """Return max length of consecutive True in a boolean series."""
+    if mask is None or mask.empty:
+        return 0
+    m = mask.fillna(False).astype(bool).to_numpy()
+    best = 0
+    cur = 0
+    for v in m:
+        if v:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return int(best)
+
 # =========================
 # METRICS
 # =========================
@@ -223,12 +241,18 @@ def symbol_metrics_from_floorsheet(fs: pd.DataFrame):
 
 
 def broker_symbol_metrics(fs: pd.DataFrame):
+    """
+    Daily broker-symbol metrics (UPDATED):
+    - Adds Buy_Amount_Cr and Sell_Amount_Cr
+    - Adds Net_Amount_Cr = Buy_Amount_Cr - Sell_Amount_Cr
+    """
     buy = fs[["TradeDate", "Symbol", "Buyer", "Quantity", "Rate"]].copy()
     buy = buy.rename(columns={"Buyer": "Broker"})
     buy["Buy_Qty"] = buy["Quantity"]
     buy["Sell_Qty"] = 0.0
     buy["_buy_cost"] = buy["Quantity"] * buy["Rate"]
     buy["_buy_amt"] = buy["Quantity"] * buy["Rate"]
+    buy["_sell_amt"] = 0.0
 
     sell = fs[["TradeDate", "Symbol", "Seller", "Quantity", "Rate"]].copy()
     sell = sell.rename(columns={"Seller": "Broker"})
@@ -236,6 +260,7 @@ def broker_symbol_metrics(fs: pd.DataFrame):
     sell["Sell_Qty"] = sell["Quantity"]
     sell["_buy_cost"] = 0.0
     sell["_buy_amt"] = 0.0
+    sell["_sell_amt"] = sell["Quantity"] * sell["Rate"]
 
     x = pd.concat([buy, sell], ignore_index=True)
     x["Broker"] = x["Broker"].astype("Int64")
@@ -245,11 +270,16 @@ def broker_symbol_metrics(fs: pd.DataFrame):
         Sell_Qty=("Sell_Qty", "sum"),
         _buy_cost=("_buy_cost", "sum"),
         _buy_amt=("_buy_amt", "sum"),
+        _sell_amt=("_sell_amt", "sum"),
     )
     g["Net_Qty"] = g["Buy_Qty"] - g["Sell_Qty"]
     g["Avg_Buy_Cost"] = np.where(g["Buy_Qty"] > 0, g["_buy_cost"] / g["Buy_Qty"], np.nan)
+
     g["Buy_Amount_Cr"] = g["_buy_amt"] / CRORE
-    return g.drop(columns=["_buy_cost", "_buy_amt"], errors="ignore")
+    g["Sell_Amount_Cr"] = g["_sell_amt"] / CRORE
+    g["Net_Amount_Cr"] = g["Buy_Amount_Cr"] - g["Sell_Amount_Cr"]
+
+    return g.drop(columns=["_buy_cost", "_buy_amt", "_sell_amt"], errors="ignore")
 
 
 def top_net_brokers(bsym_symbol_level: pd.DataFrame, topn=5):
@@ -335,7 +365,6 @@ def volume_surge_from_prices(price_window: pd.DataFrame, latest_date: pd.Timesta
     latest = p[p["TradeDate"] == latest_date][["Symbol", "Vol"]].rename(columns={"Vol": "Vol_Latest"})
     hist = p[p["TradeDate"] != latest_date][["Symbol", "Vol"]]
     if hist.empty:
-        # if window is 1 day, use same day as avg to avoid division by 0
         avg = latest.rename(columns={"Vol_Latest": "Vol_Avg"})
     else:
         avg = hist.groupby("Symbol", as_index=False)["Vol"].mean().rename(columns={"Vol": "Vol_Avg"})
@@ -368,7 +397,6 @@ def candle_metrics_from_prices(price_window: pd.DataFrame, latest_date: pd.Times
     p["Body_%"] = np.where(p["Open"] > 0, (p["Close"] - p["Open"]).abs() / p["Open"] * 100, np.nan)
     return p[["Symbol", "Range_%", "Close_Pos", "Body_%"]]
 
-
 # =========================
 # SCORING: BUY/HOLD/SELL
 # =========================
@@ -390,9 +418,8 @@ def build_trade_score(sym: pd.DataFrame):
     x["BuyP"] = x["Buy_Pressure"].fillna(0)
     x["SellP"] = x["Sell_Pressure"].fillna(0)
 
-    # Volume surge gives breakout confirmation; cap to reduce outlier blow-ups
     x["Vol_Surge"] = pd.to_numeric(x.get("Vol_Surge", np.nan), errors="coerce")
-    x["Vol_Surge_c"] = x["Vol_Surge"].clip(lower=0, upper=10).fillna(1.0)  # 1=normal
+    x["Vol_Surge_c"] = x["Vol_Surge"].clip(lower=0, upper=10).fillna(1.0)
 
     raw = (
         zscore(x["Price_vs_VWAP"].fillna(0)) * 22
@@ -438,49 +465,88 @@ def build_trade_score(sym: pd.DataFrame):
         if liq >= 5:
             tags.append("High Liquidity")
 
-        reasons.append(", ".join(tags[:5]))
+        reasons.append(", ".join(tags[:6]))
     x["Reason"] = reasons
     return x
 
-
 # =========================
-# SMART MONEY / INSTITUTION / OPERATOR
+# SMART MONEY / ACCUMULATION (UPDATED)
 # =========================
-def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timestamp, scored_symbols: pd.DataFrame):
-    if symbol_level_broker.empty:
-        sm_sym = pd.DataFrame(columns=["Symbol", "Net_Qty", "Buy_Qty", "Sell_Qty", "Active_Days", "Top3_Pos_Share",
-                                       "SmartMoneyScore", "SmartMoneySignal"])
-        sm_broker = pd.DataFrame(columns=["Broker", "Net_Qty", "Buy_Qty", "Sell_Qty", "Active_Days", "Symbols",
-                                          "SmartBrokerScore", "Tag"])
+def build_smart_money(bs_daily: pd.DataFrame, latest_date: pd.Timestamp, scored_symbols: pd.DataFrame):
+    if bs_daily.empty:
+        sm_sym = pd.DataFrame(columns=[
+            "Symbol", "Net_Qty", "Buy_Qty", "Sell_Qty",
+            "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr",
+            "Traded_Days", "NetBuy_Days", "NetBuy_Ratio", "Max_Consec_NetBuy_Days",
+            "Top3_Pos_Share", "TopBuyer_Rotation",
+            "SmartMoneyScore", "SmartMoneySignal"
+        ])
+        sm_broker = pd.DataFrame(columns=[
+            "Broker", "Net_Qty", "Buy_Qty", "Sell_Qty",
+            "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr",
+            "Traded_Days", "NetBuy_Days", "NetBuy_Ratio", "Max_Consec_NetBuy_Days",
+            "Symbols", "SmartBrokerScore", "Tag"
+        ])
         return sm_sym, sm_broker
 
-    bs = symbol_level_broker.copy()
+    bs = bs_daily.copy()
 
-    if "TradeDate" in bs.columns:
-        daily = bs.copy()
-        ad = daily.groupby(["Symbol", "Broker"], as_index=False).agg(Active_Days=("Net_Qty", lambda s: int((s > 0).sum())))
-        bs_w = daily.groupby(["Symbol", "Broker"], as_index=False).agg(
-            Buy_Qty=("Buy_Qty", "sum"),
-            Sell_Qty=("Sell_Qty", "sum"),
-            Net_Qty=("Net_Qty", "sum"),
-            Avg_Buy_Cost=("Avg_Buy_Cost", "mean"),
-            Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
-        )
-        bs = bs_w.merge(ad, on=["Symbol", "Broker"], how="left")
-    else:
-        if "Active_Days" not in bs.columns:
-            bs["Active_Days"] = np.nan
+    # Ensure required columns exist
+    for c in ["Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr", "Avg_Buy_Cost"]:
+        if c not in bs.columns:
+            bs[c] = np.nan
 
-    sym_tot = bs.groupby("Symbol", as_index=False).agg(
+    # ===== Broker-symbol persistence metrics =====
+    # Traded_Days: days broker appeared (buy or sell)
+    traded_days = bs.groupby(["Symbol", "Broker"], as_index=False).agg(
+        Traded_Days=("TradeDate", "nunique"),
+        NetBuy_Days=("Net_Qty", lambda s: int((s > 0).sum())),
+    )
+    traded_days["NetBuy_Ratio"] = np.where(
+        traded_days["Traded_Days"] > 0,
+        traded_days["NetBuy_Days"] / traded_days["Traded_Days"],
+        np.nan
+    )
+
+    # Max consecutive net-buy days per broker-symbol (sorted by date)
+    bs_sorted = bs.sort_values(["Symbol", "Broker", "TradeDate"])
+    streaks = []
+    for (sym, brk), g in bs_sorted.groupby(["Symbol", "Broker"]):
+        streaks.append({
+            "Symbol": sym,
+            "Broker": brk,
+            "Max_Consec_NetBuy_Days": max_consecutive_true(g["Net_Qty"] > 0)
+        })
+    streaks = pd.DataFrame(streaks) if streaks else pd.DataFrame(columns=["Symbol", "Broker", "Max_Consec_NetBuy_Days"])
+
+    # ===== Window-level broker-symbol aggregation =====
+    bs_w = bs.groupby(["Symbol", "Broker"], as_index=False).agg(
         Buy_Qty=("Buy_Qty", "sum"),
         Sell_Qty=("Sell_Qty", "sum"),
         Net_Qty=("Net_Qty", "sum"),
-        Net_Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+        Avg_Buy_Cost=("Avg_Buy_Cost", "mean"),
+        Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+        Sell_Amount_Cr=("Sell_Amount_Cr", "sum"),
+        Net_Amount_Cr=("Net_Amount_Cr", "sum"),
+    )
+    bs_w = bs_w.merge(traded_days, on=["Symbol", "Broker"], how="left").merge(streaks, on=["Symbol", "Broker"], how="left")
+
+    # ===== Symbol totals =====
+    sym_tot = bs_w.groupby("Symbol", as_index=False).agg(
+        Buy_Qty=("Buy_Qty", "sum"),
+        Sell_Qty=("Sell_Qty", "sum"),
+        Net_Qty=("Net_Qty", "sum"),
+        Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+        Sell_Amount_Cr=("Sell_Amount_Cr", "sum"),
+        Net_Amount_Cr=("Net_Amount_Cr", "sum"),
         Accum_Broker_Count=("Net_Qty", lambda s: int((s > 0).sum())),
-        Active_Days=("Active_Days", lambda s: int(np.nanmax(s)) if np.any(~np.isnan(s)) else np.nan),
+        Traded_Broker_Count=("Broker", "nunique"),
+        Avg_NetBuy_Ratio=("NetBuy_Ratio", "mean"),
+        Max_Consec_NetBuy_Days=("Max_Consec_NetBuy_Days", "max"),
     )
 
-    tmp = bs.copy()
+    # ===== Top3 buyer dominance share =====
+    tmp = bs_w.copy()
     tmp["pos"] = tmp["Net_Qty"].clip(lower=0)
     pos_sum = tmp.groupby("Symbol", as_index=False)["pos"].sum().rename(columns={"pos": "pos_total"})
     top3 = (
@@ -495,23 +561,66 @@ def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timesta
     dom["Top3_Pos_Share"] = np.where(dom["pos_total"] > 0, dom["top3_pos"].fillna(0) / dom["pos_total"], np.nan)
     dom = dom[["Symbol", "Top3_Pos_Share"]]
 
-    sm_sym = sym_tot.merge(dom, on="Symbol", how="left")
+    # ===== Top buyer rotation index =====
+    # For each day, identify top net buyer broker; then count unique across window
+    daily_top = (
+        bs_daily.sort_values(["Symbol", "TradeDate", "Net_Qty"], ascending=[True, True, False])
+        .groupby(["Symbol", "TradeDate"])
+        .head(1)[["Symbol", "TradeDate", "Broker", "Net_Qty"]]
+        .copy()
+    )
+    rot = daily_top.groupby("Symbol", as_index=False).agg(
+        TopBuyer_Unique=("Broker", "nunique"),
+        TopBuyer_Days=("TradeDate", "nunique"),
+    )
+    rot["TopBuyer_Rotation"] = np.where(rot["TopBuyer_Days"] > 0, rot["TopBuyer_Unique"] / rot["TopBuyer_Days"], np.nan)
 
-    cols = ["Symbol", "Company", "Sectors", "VWAP", "Last_Price", "Momentum", "Buy_Pressure", "Sell_Pressure",
-            "Total_Amount_Cr", "Vol_Surge", "Range_%", "Close_Pos"]
+    # ===== Merge context from scored symbols =====
+    cols = [
+        "Symbol", "Company", "Sectors", "VWAP", "Last_Price", "Momentum",
+        "Buy_Pressure", "Sell_Pressure", "Total_Amount_Cr",
+        "Vol_Surge", "Range_%", "Close_Pos", "Close_gt_VWAP"
+    ]
     ctx = scored_symbols[[c for c in cols if c in scored_symbols.columns]].drop_duplicates("Symbol")
+
+    sm_sym = sym_tot.merge(dom, on="Symbol", how="left").merge(rot[["Symbol", "TopBuyer_Rotation"]], on="Symbol", how="left")
     sm_sym = sm_sym.merge(ctx, on="Symbol", how="left")
 
-    sm_sym["Price_vs_VWAP_pct"] = np.where(sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0),
-                                          (sm_sym["Last_Price"] / sm_sym["VWAP"] - 1) * 100, np.nan)
+    sm_sym["Price_vs_VWAP_pct"] = np.where(
+        sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0),
+        (sm_sym["Last_Price"] / sm_sym["VWAP"] - 1) * 100,
+        np.nan
+    )
+
+    # ===== Absorption score (NEW) =====
+    # High sell pressure but price holds above VWAP and closes strong
+    sp = pd.to_numeric(sm_sym.get("Sell_Pressure", np.nan), errors="coerce").fillna(0)
+    bp = pd.to_numeric(sm_sym.get("Buy_Pressure", np.nan), errors="coerce").fillna(0)
+    close_pos = pd.to_numeric(sm_sym.get("Close_Pos", np.nan), errors="coerce").fillna(0.5)
+    close_gt_vwap = sm_sym.get("Close_gt_VWAP", False).fillna(False).astype(bool)
+
+    sm_sym["AbsorptionFlag"] = np.where(
+        (sp >= 0.45) & (close_gt_vwap) & (close_pos >= 0.60) & (bp >= 0.30),
+        True, False
+    )
+
+    # ===== Smart Money Score (UPDATED) =====
+    # Key change: use Net_Amount_Cr (not Buy_Amount only)
+    vol_surge = pd.to_numeric(sm_sym.get("Vol_Surge", np.nan), errors="coerce").fillna(1.0)
+    rotation = pd.to_numeric(sm_sym.get("TopBuyer_Rotation", np.nan), errors="coerce").fillna(0.0)
+    netbuy_ratio = pd.to_numeric(sm_sym.get("Avg_NetBuy_Ratio", np.nan), errors="coerce").fillna(0.0)
+    consec = pd.to_numeric(sm_sym.get("Max_Consec_NetBuy_Days", np.nan), errors="coerce").fillna(0.0)
 
     base = (
-        zscore(sm_sym["Net_Qty"]) * 33
-        + zscore(sm_sym["Net_Buy_Amount_Cr"].fillna(0)) * 18
-        + zscore(sm_sym["Active_Days"].fillna(0)) * 14
-        + zscore(sm_sym["Top3_Pos_Share"].fillna(0)) * 13
-        + zscore(sm_sym["Price_vs_VWAP_pct"].fillna(0) / 100.0) * 12
-        + zscore(np.log1p(pd.to_numeric(sm_sym["Vol_Surge"], errors="coerce").fillna(1.0))) * 10
+        zscore(sm_sym["Net_Qty"].fillna(0)) * 28
+        + zscore(sm_sym["Net_Amount_Cr"].fillna(0)) * 22
+        + zscore(netbuy_ratio) * 12
+        + zscore(consec) * 10
+        + zscore(sm_sym["Top3_Pos_Share"].fillna(0)) * 10
+        + zscore(sm_sym["Price_vs_VWAP_pct"].fillna(0) / 100.0) * 10
+        + zscore(np.log1p(vol_surge.clip(lower=0, upper=10))) * 8
+        - zscore(rotation.fillna(0)) * 8  # high rotation = less trustworthy
+        + zscore(sm_sym["AbsorptionFlag"].astype(int)) * 8
     )
     mn, mx = float(base.min()), float(base.max())
     sm_sym["SmartMoneyScore"] = np.where(mx > mn, 100 * (base - mn) / (mx - mn), 50.0)
@@ -529,27 +638,63 @@ def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timesta
 
     sm_sym["SmartMoneySignal"] = sm_sym["SmartMoneyScore"].apply(sm_signal)
 
-    sm_broker = bs.groupby("Broker", as_index=False).agg(
+    # ===== Broker-level Smart Broker (UPDATED) =====
+    sm_broker = bs_w.groupby("Broker", as_index=False).agg(
         Buy_Qty=("Buy_Qty", "sum"),
         Sell_Qty=("Sell_Qty", "sum"),
         Net_Qty=("Net_Qty", "sum"),
-        Active_Days=("Active_Days", lambda s: int(np.nanmax(s)) if np.any(~np.isnan(s)) else np.nan),
-        Symbols=("Symbol", "nunique"),
         Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+        Sell_Amount_Cr=("Sell_Amount_Cr", "sum"),
+        Net_Amount_Cr=("Net_Amount_Cr", "sum"),
+        Traded_Days=("Traded_Days", "sum"),
+        NetBuy_Days=("NetBuy_Days", "sum"),
+        Avg_NetBuy_Ratio=("NetBuy_Ratio", "mean"),
+        Max_Consec_NetBuy_Days=("Max_Consec_NetBuy_Days", "max"),
+        Symbols=("Symbol", "nunique"),
     )
+    sm_broker["NetBuy_Ratio"] = np.where(sm_broker["Traded_Days"] > 0, sm_broker["NetBuy_Days"] / sm_broker["Traded_Days"], np.nan)
+
     braw = (
-        zscore(sm_broker["Net_Qty"]) * 45
-        + zscore(sm_broker["Buy_Amount_Cr"].fillna(0)) * 25
+        zscore(sm_broker["Net_Qty"].fillna(0)) * 35
+        + zscore(sm_broker["Net_Amount_Cr"].fillna(0)) * 30
         + zscore(sm_broker["Symbols"].fillna(0)) * 15
-        + zscore(sm_broker["Active_Days"].fillna(0)) * 15
+        + zscore(sm_broker["NetBuy_Ratio"].fillna(0)) * 10
+        + zscore(sm_broker["Max_Consec_NetBuy_Days"].fillna(0)) * 10
     )
     bmn, bmx = float(braw.min()), float(braw.max())
     sm_broker["SmartBrokerScore"] = np.where(bmx > bmn, 100 * (braw - bmn) / (bmx - bmn), 50.0)
     sm_broker["Tag"] = np.where(sm_broker["SmartBrokerScore"] >= 75, "SMART-BROKER",
                                 np.where(sm_broker["SmartBrokerScore"] >= 55, "WATCH", "NORMAL"))
+
+    # Order columns (nice)
+    sym_keep = [
+        "Symbol", "Company", "Sectors",
+        "Net_Qty", "Buy_Qty", "Sell_Qty",
+        "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr",
+        "Traded_Broker_Count", "Accum_Broker_Count",
+        "Avg_NetBuy_Ratio", "Max_Consec_NetBuy_Days",
+        "Top3_Pos_Share", "TopBuyer_Rotation",
+        "VWAP", "Last_Price", "Price_vs_VWAP_pct",
+        "Momentum", "Vol_Surge", "Buy_Pressure", "Sell_Pressure",
+        "Close_Pos", "AbsorptionFlag",
+        "SmartMoneyScore", "SmartMoneySignal"
+    ]
+    sm_sym = sm_sym[[c for c in sym_keep if c in sm_sym.columns]].copy()
+
+    bro_keep = [
+        "Broker", "Net_Qty", "Buy_Qty", "Sell_Qty",
+        "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr",
+        "Traded_Days", "NetBuy_Days", "NetBuy_Ratio", "Max_Consec_NetBuy_Days",
+        "Symbols", "SmartBrokerScore", "Tag"
+    ]
+    sm_broker = sm_broker[[c for c in bro_keep if c in sm_broker.columns]].copy()
+
     return sm_sym, sm_broker
 
 
+# =========================
+# INSTITUTION / OPERATOR (kept, with minor compatibility improvements)
+# =========================
 def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFrame, sector: pd.DataFrame, broker_master: pd.DataFrame):
     if bs_window.empty:
         inst = pd.DataFrame(columns=["Broker", "BrokerName", "BrokerType", "Net_Qty", "Buy_Qty", "Sell_Qty", "Buy_Amount_Cr",
@@ -662,7 +807,6 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
     inst = inst[[c for c in inst_cols if c in inst.columns]].copy()
     op = op[[c for c in op_cols if c in op.columns]].copy()
     return inst, op
-
 
 # =========================
 # EXCEL FORMATTING
@@ -819,7 +963,6 @@ def write_excel_report(path: Path, sheets: dict, charts_config: list):
 
     wb.save(path)
 
-
 # =========================
 # MAIN
 # =========================
@@ -891,9 +1034,12 @@ def main():
         )
         sym = sym.merge(price_latest[["Symbol", "Last_Price", "Vol", "Turnover"]], on="Symbol", how="left")
 
-        # Broker-symbol daily metrics
+        # Broker-symbol daily metrics (UPDATED)
         bs_daily = broker_symbol_metrics(fs) if not fs.empty else pd.DataFrame(
-            columns=["TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr"]
+            columns=[
+                "TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty",
+                "Avg_Buy_Cost", "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr"
+            ]
         )
 
         # Window-level broker-symbol
@@ -904,10 +1050,15 @@ def main():
                 Net_Qty=("Net_Qty", "sum"),
                 Avg_Buy_Cost=("Avg_Buy_Cost", "mean"),
                 Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+                Sell_Amount_Cr=("Sell_Amount_Cr", "sum"),
+                Net_Amount_Cr=("Net_Amount_Cr", "sum"),
                 Active_Days=("Net_Qty", lambda s: int((s > 0).sum())),
             )
         else:
-            bs_window = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr", "Active_Days"])
+            bs_window = pd.DataFrame(columns=[
+                "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty",
+                "Avg_Buy_Cost", "Buy_Amount_Cr", "Sell_Amount_Cr", "Net_Amount_Cr", "Active_Days"
+            ])
 
         # Pressure (dynamic top-N)
         pressure = compute_pressure(bs_window, topn=topn)
@@ -924,7 +1075,7 @@ def main():
         # Score
         scored = build_trade_score(sym)
 
-        # Risk flags (simple and actionable)
+        # Risk flags (improved)
         scored["Risk_Flags"] = ""
         scored.loc[pd.to_numeric(scored.get("Sell_Pressure", 0), errors="coerce").fillna(0) >= 0.45, "Risk_Flags"] += "SellWall; "
         scored.loc[pd.to_numeric(scored.get("Vol_Surge", 1), errors="coerce").fillna(1) >= 3.0, "Risk_Flags"] += "TooHotVol; "
@@ -974,6 +1125,8 @@ def main():
                 Sell_Qty=("Sell_Qty", "sum"),
                 Net_Qty=("Net_Qty", "sum"),
                 Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+                Sell_Amount_Cr=("Sell_Amount_Cr", "sum"),
+                Net_Amount_Cr=("Net_Amount_Cr", "sum"),
                 Symbols=("Symbol", "nunique"),
             )
             bsum = bsum.merge(brokers_master, on="Broker", how="left")
@@ -1028,7 +1181,7 @@ def main():
             )
             sector_summary_all.append(sec.sort_values(["Window", "Amount_Cr"], ascending=[True, False]))
 
-        # Smart money + Inst/Operator
+        # Smart money + Inst/Operator (UPDATED Smart Money)
         sm_sym, sm_broker = build_smart_money(bs_daily, w_latest, scored_symbols=scored)
         sm_sym.insert(0, "Window", wname)
         sm_broker.insert(0, "Window", wname)
@@ -1046,24 +1199,38 @@ def main():
         inst_all.append(inst)
         opr_all.append(opr)
 
-        # Trade setups (retail actionable shortlist)
+        # Trade setups (improved CAUTION rules)
         if not scored.empty:
-            sm_ctx = sm_sym[["Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Buy_Amount_Cr"]] if not sm_sym.empty else pd.DataFrame()
-            op_ctx = opr.groupby("Symbol", as_index=False)["OperatorScore"].max() if not opr.empty and "OperatorScore" in opr.columns else pd.DataFrame(columns=["Symbol", "OperatorScore"])
-            sx = scored.merge(sm_ctx, on="Symbol", how="left").merge(op_ctx, on="Symbol", how="left")
-            sx["OperatorScore"] = pd.to_numeric(sx.get("OperatorScore", np.nan), errors="coerce")
-            sx["SetupScore"] = (
-                pd.to_numeric(sx["Score"], errors="coerce").fillna(50) * 0.55
-                + pd.to_numeric(sx.get("SmartMoneyScore", np.nan), errors="coerce").fillna(50) * 0.35
-                + zscore(np.log1p(pd.to_numeric(sx.get("Vol_Surge", 1), errors="coerce").fillna(1))) * 10
-                - zscore(pd.to_numeric(sx.get("OperatorScore", 0), errors="coerce").fillna(0) / 100.0) * 8
-            )
-            # normalize to 0-100
-            mn, mx = float(sx["SetupScore"].min()), float(sx["SetupScore"].max())
-            sx["SetupScore"] = np.where(mx > mn, 100 * (sx["SetupScore"] - mn) / (mx - mn), 50.0)
+            sm_ctx = sm_sym[[
+                "Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Amount_Cr",
+                "Top3_Pos_Share", "TopBuyer_Rotation", "AbsorptionFlag"
+            ]] if not sm_sym.empty else pd.DataFrame()
 
-            # Setup rules (keep simple but strong)
+            op_ctx = opr.groupby("Symbol", as_index=False)["OperatorScore"].max() if not opr.empty and "OperatorScore" in opr.columns else pd.DataFrame(columns=["Symbol", "OperatorScore"])
+
+            sx = scored.merge(sm_ctx, on="Symbol", how="left").merge(op_ctx, on="Symbol", how="left")
+
+            sx["OperatorScore"] = pd.to_numeric(sx.get("OperatorScore", np.nan), errors="coerce")
+            sx["Top3_Pos_Share"] = pd.to_numeric(sx.get("Top3_Pos_Share", np.nan), errors="coerce")
+            sx["TopBuyer_Rotation"] = pd.to_numeric(sx.get("TopBuyer_Rotation", np.nan), errors="coerce")
+            sx["AbsorptionFlag"] = sx.get("AbsorptionFlag", False).fillna(False).astype(bool)
+
+            # SetupScore: heavier weight on SmartMoney now that it is improved
+            sx["SetupScore_raw"] = (
+                pd.to_numeric(sx["Score"], errors="coerce").fillna(50) * 0.50
+                + pd.to_numeric(sx.get("SmartMoneyScore", np.nan), errors="coerce").fillna(50) * 0.40
+                + zscore(np.log1p(pd.to_numeric(sx.get("Vol_Surge", 1), errors="coerce").fillna(1).clip(lower=0, upper=10))) * 8
+                - zscore(pd.to_numeric(sx.get("OperatorScore", 0), errors="coerce").fillna(0) / 100.0) * 10
+                - zscore(pd.to_numeric(sx.get("TopBuyer_Rotation", 0), errors="coerce").fillna(0)) * 5
+                + zscore(sx["AbsorptionFlag"].astype(int)) * 7
+            )
+            mn, mx = float(sx["SetupScore_raw"].min()), float(sx["SetupScore_raw"].max())
+            sx["SetupScore"] = np.where(mx > mn, 100 * (sx["SetupScore_raw"] - mn) / (mx - mn), 50.0)
+
+            # Tags
             sx["Setup_Tag"] = "WATCH"
+
+            # BUY_SETUP: needs confirmation
             sx.loc[
                 (pd.to_numeric(sx["Score"], errors="coerce") >= 70)
                 & (pd.to_numeric(sx.get("Vol_Surge", 1), errors="coerce") >= 1.5)
@@ -1072,30 +1239,46 @@ def main():
                 "Setup_Tag"
             ] = "BUY_SETUP"
 
+            # CAUTION rules (stronger)
             sx.loc[
                 (pd.to_numeric(sx.get("Sell_Pressure", 0), errors="coerce") >= 0.50)
-                | (pd.to_numeric(sx.get("OperatorScore", 0), errors="coerce") >= 75),
+                | (pd.to_numeric(sx.get("OperatorScore", 0), errors="coerce") >= 75)
+                | (pd.to_numeric(sx.get("Vol_Surge", 1), errors="coerce") >= 3.5)
+                | (pd.to_numeric(sx.get("Top3_Pos_Share", 0), errors="coerce") >= 0.70),
                 "Setup_Tag"
             ] = "CAUTION"
 
-            # Retail plan hints (not financial advice – generic)
+            # Distribution trap: SmartMoneyScore looks high but price action weak
+            sx.loc[
+                (pd.to_numeric(sx.get("SmartMoneyScore", 50), errors="coerce") >= 70)
+                & (pd.to_numeric(sx.get("Momentum", 0), errors="coerce") < -0.02)
+                & (pd.to_numeric(sx.get("Close_Pos", 0.5), errors="coerce") < 0.35),
+                "Setup_Tag"
+            ] = "CAUTION"
+
+            # Retail plan hints
             sx["Retail_Plan"] = ""
             sx.loc[sx["Setup_Tag"] == "BUY_SETUP", "Retail_Plan"] = "Prefer entry near VWAP/Support; cut if closes below VWAP"
-            sx.loc[sx["Setup_Tag"] == "CAUTION", "Retail_Plan"] = "Wait for confirmation; avoid chasing; watch sell wall"
+            sx.loc[sx["Setup_Tag"] == "CAUTION", "Retail_Plan"] = "Wait for confirmation; avoid chasing; watch sell wall / operator risk"
 
             keep = [
                 "Window", "Symbol", "Company", "Sectors",
                 "SetupScore", "Setup_Tag",
-                "Score", "Recommendation", "SmartMoneyScore", "SmartMoneySignal",
+                "Score", "Recommendation",
+                "SmartMoneyScore", "SmartMoneySignal",
                 "Vol_Surge", "Momentum", "Buy_Pressure", "Sell_Pressure",
                 "Range_%", "Close_Pos", "Risk_Flags",
+                "Top3_Pos_Share", "TopBuyer_Rotation", "AbsorptionFlag",
                 "OperatorScore",
                 "Retail_Plan"
             ]
             sx = sx[[c for c in keep if c in sx.columns]].copy()
-            for c in ["SetupScore", "Score", "SmartMoneyScore", "Vol_Surge", "Momentum", "Range_%", "Close_Pos", "Buy_Pressure", "Sell_Pressure", "OperatorScore"]:
+
+            for c in ["SetupScore", "Score", "SmartMoneyScore", "Vol_Surge", "Momentum", "Range_%", "Close_Pos",
+                      "Buy_Pressure", "Sell_Pressure", "OperatorScore", "Top3_Pos_Share", "TopBuyer_Rotation"]:
                 if c in sx.columns:
-                    sx[c] = pd.to_numeric(sx[c], errors="coerce").round(2)
+                    sx[c] = pd.to_numeric(sx[c], errors="coerce").round(3)
+
             sx = sx.sort_values(["SetupScore"], ascending=False).head(60).copy()
             setups_all.append(sx)
 
@@ -1123,14 +1306,15 @@ def main():
     if not smart_money.empty:
         sm7 = smart_money[smart_money["Window"] == "7D"].copy()
         if not sm7.empty and "SmartMoneyScore" in sm7.columns:
-            cols = ["Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Buy_Amount_Cr", "Sectors"]
+            cols = ["Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Amount_Cr", "Top3_Pos_Share", "TopBuyer_Rotation", "Sectors"]
             sm_chart = sm7.sort_values("SmartMoneyScore", ascending=False).head(20)[[c for c in cols if c in sm7.columns]].copy()
 
     if not smart_broker.empty:
         sb7 = smart_broker[smart_broker["Window"] == "7D"].copy()
         if not sb7.empty and "SmartBrokerScore" in sb7.columns:
             sb_chart = sb7.sort_values("SmartBrokerScore", ascending=False).head(15)[
-                ["Broker", "SmartBrokerScore", "Net_Qty", "Buy_Amount_Cr", "Tag"]
+                ["Broker", "SmartBrokerScore", "Net_Qty", "Net_Amount_Cr", "Tag"]
+                if "Net_Amount_Cr" in sb7.columns else ["Broker", "SmartBrokerScore", "Net_Qty", "Buy_Amount_Cr", "Tag"]
             ].copy()
 
     if not inst_tracker.empty:
@@ -1149,23 +1333,21 @@ def main():
     if not trade_setups.empty:
         s7 = trade_setups[trade_setups["Window"] == "7D"].copy()
         if not s7.empty and "SetupScore" in s7.columns:
-            setup_chart = s7.sort_values("SetupScore", ascending=False).head(20)[
-                ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge", "Momentum"]
-                if "Momentum" in s7.columns else ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge"]
-            ].copy()
+            cols = ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge", "Momentum", "Top3_Pos_Share", "TopBuyer_Rotation"]
+            setup_chart = s7.sort_values("SetupScore", ascending=False).head(20)[[c for c in cols if c in s7.columns]].copy()
 
     readme = pd.DataFrame(
         [
-            ["Retail-Pro NEPSE Report", ""],
+            ["Retail-Pro NEPSE Report (UPDATED)", ""],
             ["Windows", "1D=1 trading day, 7D=7 trading days, 15D=15 trading days, 1M=30 trading days (based on available files)"],
             ["Pressure Top-N", "1D=4, 7D=5, 15D/1M=10 (used in Buy/Sell pressure dominance)"],
             ["BUY/HOLD/SELL", "Score (0-100): BUY>=70, HOLD 50-69, SELL/AVOID<50"],
             ["Volume Surge", "Vol_Surge = latest volume / window-average volume (higher helps confirm breakout)"],
             ["Candle Metrics", "Range_% (volatility), Close_Pos (close near high=strong), Body_% (move strength)"],
-            ["Trade_Setups", "Shortlist for retail: Score + SmartMoney + Volume Surge, with caution flags for sell-wall/operator pressure"],
-            ["Smart Money", "Uses broker net flows + capital + persistence + concentration + price behavior to score accumulation/distribution"],
-            ["Institution Tracker", "Behavior-based: persistence + breadth + net flow + capital; penalizes flip & high concentration"],
-            ["Operator Radar", "Behavior-based: high concentration + flip + burst + chasing; shows likely operator pressure per broker-symbol"],
+            ["Smart Money (UPDATED)", "Uses NET flows (qty + amount), persistence, streaks, dominance, rotation penalty, absorption, plus price/volume context"],
+            ["TopBuyer Rotation", "Unique top-buyer brokers / traded days. Higher → more rotation → less trustworthy accumulation"],
+            ["AbsorptionFlag", "Sell pressure high but price holds above VWAP and closes strong → potential absorption"],
+            ["Trade_Setups", "Shortlist for retail: Score + SmartMoney + Volume, with stronger CAUTION rules for operator-control/overheat"],
             ["Sector file", f"Loaded from: {SECTOR_PATH.name} (exists={SECTOR_PATH.exists()})"],
             ["Broker master", f"Optional: {BROKER_PATH.as_posix()} (exists={BROKER_PATH.exists()}). Columns: Broker,BrokerName,BrokerType"],
         ],
