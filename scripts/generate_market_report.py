@@ -341,7 +341,11 @@ def volume_surge_from_prices(price_window: pd.DataFrame, latest_date: pd.Timesta
         avg = hist.groupby("Symbol", as_index=False)["Vol"].mean().rename(columns={"Vol": "Vol_Avg"})
 
     out = latest.merge(avg, on="Symbol", how="left")
-    out["Vol_Surge"] = np.where(out["Vol_Avg"].notna() & (out["Vol_Avg"] > 0), out["Vol_Latest"] / out["Vol_Avg"], np.nan)
+    out["Vol_Surge"] = np.where(
+        out["Vol_Avg"].notna() & (out["Vol_Avg"] > 0),
+        out["Vol_Latest"] / out["Vol_Avg"],
+        np.nan,
+    )
     return out[["Symbol", "Vol_Surge", "Vol_Avg", "Vol_Latest"]]
 
 
@@ -382,7 +386,11 @@ def build_trade_score(sym: pd.DataFrame):
     x = sym.copy()
 
     x["Price_vs_VWAP"] = np.where(x["VWAP"].notna() & (x["VWAP"] > 0), (x["Last_Price"] / x["VWAP"]) - 1.0, np.nan)
-    x["Close_gt_VWAP"] = np.where(x["VWAP"].notna() & (x["VWAP"] > 0) & x["Last_Price"].notna(), (x["Last_Price"] >= x["VWAP"]), False)
+    x["Close_gt_VWAP"] = np.where(
+        x["VWAP"].notna() & (x["VWAP"] > 0) & x["Last_Price"].notna(),
+        (x["Last_Price"] >= x["VWAP"]),
+        False,
+    )
 
     x["Activity"] = np.log1p(x["Total_Qty"].fillna(0))
     x["Liq"] = np.log1p(x["Total_Amount_Cr"].fillna(0))
@@ -448,17 +456,39 @@ def build_trade_score(sym: pd.DataFrame):
 # =========================
 def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timestamp, scored_symbols: pd.DataFrame):
     if symbol_level_broker.empty:
-        sm_sym = pd.DataFrame(columns=["Symbol", "Net_Qty", "Buy_Qty", "Sell_Qty", "Active_Days", "Top3_Pos_Share",
-                                       "SmartMoneyScore", "SmartMoneySignal"])
-        sm_broker = pd.DataFrame(columns=["Broker", "Net_Qty", "Buy_Qty", "Sell_Qty", "Active_Days", "Symbols",
-                                          "SmartBrokerScore", "Tag"])
+        sm_sym = pd.DataFrame(
+            columns=[
+                "Symbol",
+                "Net_Qty",
+                "Buy_Qty",
+                "Sell_Qty",
+                "Active_Days",
+                "Top3_Pos_Share",
+                "SmartMoneyScore",
+                "SmartMoneySignal",
+            ]
+        )
+        sm_broker = pd.DataFrame(
+            columns=[
+                "Broker",
+                "Net_Qty",
+                "Buy_Qty",
+                "Sell_Qty",
+                "Active_Days",
+                "Symbols",
+                "SmartBrokerScore",
+                "Tag",
+            ]
+        )
         return sm_sym, sm_broker
 
     bs = symbol_level_broker.copy()
 
     if "TradeDate" in bs.columns:
         daily = bs.copy()
-        ad = daily.groupby(["Symbol", "Broker"], as_index=False).agg(Active_Days=("Net_Qty", lambda s: int((s > 0).sum())))
+        ad = daily.groupby(["Symbol", "Broker"], as_index=False).agg(
+            Active_Days=("Net_Qty", lambda s: int((s > 0).sum()))
+        )
         bs_w = daily.groupby(["Symbol", "Broker"], as_index=False).agg(
             Buy_Qty=("Buy_Qty", "sum"),
             Sell_Qty=("Sell_Qty", "sum"),
@@ -497,13 +527,28 @@ def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timesta
 
     sm_sym = sym_tot.merge(dom, on="Symbol", how="left")
 
-    cols = ["Symbol", "Company", "Sectors", "VWAP", "Last_Price", "Momentum", "Buy_Pressure", "Sell_Pressure",
-            "Total_Amount_Cr", "Vol_Surge", "Range_%", "Close_Pos"]
+    cols = [
+        "Symbol",
+        "Company",
+        "Sectors",
+        "VWAP",
+        "Last_Price",
+        "Momentum",
+        "Buy_Pressure",
+        "Sell_Pressure",
+        "Total_Amount_Cr",
+        "Vol_Surge",
+        "Range_%",
+        "Close_Pos",
+    ]
     ctx = scored_symbols[[c for c in cols if c in scored_symbols.columns]].drop_duplicates("Symbol")
     sm_sym = sm_sym.merge(ctx, on="Symbol", how="left")
 
-    sm_sym["Price_vs_VWAP_pct"] = np.where(sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0),
-                                          (sm_sym["Last_Price"] / sm_sym["VWAP"] - 1) * 100, np.nan)
+    sm_sym["Price_vs_VWAP_pct"] = np.where(
+        sm_sym["VWAP"].notna() & (sm_sym["VWAP"] > 0),
+        (sm_sym["Last_Price"] / sm_sym["VWAP"] - 1) * 100,
+        np.nan,
+    )
 
     base = (
         zscore(sm_sym["Net_Qty"]) * 33
@@ -545,19 +590,56 @@ def build_smart_money(symbol_level_broker: pd.DataFrame, latest_date: pd.Timesta
     )
     bmn, bmx = float(braw.min()), float(braw.max())
     sm_broker["SmartBrokerScore"] = np.where(bmx > bmn, 100 * (braw - bmn) / (bmx - bmn), 50.0)
-    sm_broker["Tag"] = np.where(sm_broker["SmartBrokerScore"] >= 75, "SMART-BROKER",
-                                np.where(sm_broker["SmartBrokerScore"] >= 55, "WATCH", "NORMAL"))
+    sm_broker["Tag"] = np.where(
+        sm_broker["SmartBrokerScore"] >= 75,
+        "SMART-BROKER",
+        np.where(sm_broker["SmartBrokerScore"] >= 55, "WATCH", "NORMAL"),
+    )
     return sm_sym, sm_broker
 
 
-def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFrame, sector: pd.DataFrame, broker_master: pd.DataFrame):
+def build_institution_operator(
+    bs_window: pd.DataFrame, price_latest: pd.DataFrame, sector: pd.DataFrame, broker_master: pd.DataFrame
+):
     if bs_window.empty:
-        inst = pd.DataFrame(columns=["Broker", "BrokerName", "BrokerType", "Net_Qty", "Buy_Qty", "Sell_Qty", "Buy_Amount_Cr",
-                                     "Active_Days", "Symbols", "Top_Sector", "Concentration_Pct", "Flip_Ratio",
-                                     "InstitutionScore", "Tag"])
-        opr = pd.DataFrame(columns=["Broker", "BrokerName", "BrokerType", "Symbol", "Buy_Qty", "Sell_Qty", "Net_Qty",
-                                    "Buy_Amount_Cr", "Active_Days", "Flip_Ratio", "Concentration_Pct", "Avg_Buy_Cost",
-                                    "Last_Price", "Cost_vs_LTP_pct", "OperatorScore", "Tag"])
+        inst = pd.DataFrame(
+            columns=[
+                "Broker",
+                "BrokerName",
+                "BrokerType",
+                "Net_Qty",
+                "Buy_Qty",
+                "Sell_Qty",
+                "Buy_Amount_Cr",
+                "Active_Days",
+                "Symbols",
+                "Top_Sector",
+                "Concentration_Pct",
+                "Flip_Ratio",
+                "InstitutionScore",
+                "Tag",
+            ]
+        )
+        opr = pd.DataFrame(
+            columns=[
+                "Broker",
+                "BrokerName",
+                "BrokerType",
+                "Symbol",
+                "Buy_Qty",
+                "Sell_Qty",
+                "Net_Qty",
+                "Buy_Amount_Cr",
+                "Active_Days",
+                "Flip_Ratio",
+                "Concentration_Pct",
+                "Avg_Buy_Cost",
+                "Last_Price",
+                "Cost_vs_LTP_pct",
+                "OperatorScore",
+                "Tag",
+            ]
+        )
         return inst, opr
 
     b = bs_window.copy()
@@ -576,7 +658,8 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
 
     bro_tot["Flip_Ratio"] = np.where(
         (bro_tot["Buy_Qty"] + bro_tot["Sell_Qty"]) > 0,
-        np.minimum(bro_tot["Buy_Qty"], bro_tot["Sell_Qty"]) / np.maximum(bro_tot["Buy_Qty"], bro_tot["Sell_Qty"]).replace(0, np.nan),
+        np.minimum(bro_tot["Buy_Qty"], bro_tot["Sell_Qty"])
+        / np.maximum(bro_tot["Buy_Qty"], bro_tot["Sell_Qty"]).replace(0, np.nan),
         np.nan,
     )
 
@@ -585,7 +668,9 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
     den = tmp.groupby("Broker", as_index=False)["abs_net"].sum().rename(columns={"abs_net": "abs_net_total"})
     num = tmp.groupby("Broker", as_index=False)["abs_net"].max().rename(columns={"abs_net": "abs_net_max"})
     conc = den.merge(num, on="Broker", how="left")
-    conc["Concentration_Pct"] = np.where(conc["abs_net_total"] > 0, (conc["abs_net_max"] / conc["abs_net_total"]) * 100, np.nan)
+    conc["Concentration_Pct"] = np.where(
+        conc["abs_net_total"] > 0, (conc["abs_net_max"] / conc["abs_net_total"]) * 100, np.nan
+    )
     bro_tot = bro_tot.merge(conc[["Broker", "Concentration_Pct"]], on="Broker", how="left")
 
     b2 = b.merge(sector[["Symbol", "Sectors"]], on="Symbol", how="left")
@@ -614,10 +699,13 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
     )
     mn, mx = float(raw_inst.min()), float(raw_inst.max())
     inst["InstitutionScore"] = np.where(mx > mn, 100 * (raw_inst - mn) / (mx - mn), 50.0)
-    inst["Tag"] = np.where(inst["InstitutionScore"] >= 75, "INSTITUTION-LIKE",
-                           np.where(inst["InstitutionScore"] >= 55, "WATCH", "NORMAL"))
+    inst["Tag"] = np.where(inst["InstitutionScore"] >= 75, "INSTITUTION-LIKE", np.where(inst["InstitutionScore"] >= 55, "WATCH", "NORMAL"))
 
-    p = price_latest[["Symbol", "Last_Price"]].drop_duplicates("Symbol") if not price_latest.empty else pd.DataFrame(columns=["Symbol", "Last_Price"])
+    p = (
+        price_latest[["Symbol", "Last_Price"]].drop_duplicates("Symbol")
+        if not price_latest.empty
+        else pd.DataFrame(columns=["Symbol", "Last_Price"])
+    )
     op = b.merge(p, on="Symbol", how="left")
 
     tot_abs = tmp.groupby("Broker", as_index=False)["abs_net"].sum().rename(columns={"abs_net": "abs_net_total"})
@@ -626,13 +714,14 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
 
     op["Flip_Ratio"] = np.where(
         (op["Buy_Qty"] + op["Sell_Qty"]) > 0,
-        np.minimum(op["Buy_Qty"], op["Sell_Qty"]) / np.maximum(op["Buy_Qty"], op["Sell_Qty"]).replace(0, np.nan),
+        np.minimum(op["Buy_Qty"], op["Sell_Qty"])
+        / np.maximum(op["Buy_Qty"], op["Sell_Qty"]).replace(0, np.nan),
         np.nan,
     )
     op["Cost_vs_LTP_pct"] = np.where(
         op["Last_Price"].notna() & (op["Last_Price"] > 0) & op["Avg_Buy_Cost"].notna(),
         (op["Avg_Buy_Cost"] / op["Last_Price"] - 1) * 100,
-        np.nan
+        np.nan,
     )
 
     op = op.merge(broker_master, on="Broker", how="left")
@@ -648,16 +737,44 @@ def build_institution_operator(bs_window: pd.DataFrame, price_latest: pd.DataFra
     )
     omin, omax = float(raw_op.min()), float(raw_op.max())
     op["OperatorScore"] = np.where(omax > omin, 100 * (raw_op - omin) / (omax - omin), 50.0)
-    op["Tag"] = np.where(op["OperatorScore"] >= 75, "OPERATOR-LIKELY",
-                         np.where(op["OperatorScore"] >= 55, "WATCH", "NORMAL"))
+    op["Tag"] = np.where(op["OperatorScore"] >= 75, "OPERATOR-LIKELY", np.where(op["OperatorScore"] >= 55, "WATCH", "NORMAL"))
 
     op = op.sort_values(["OperatorScore"], ascending=False).head(250).copy()
 
-    inst_cols = ["Broker", "BrokerName", "BrokerType", "Net_Qty", "Buy_Qty", "Sell_Qty", "Buy_Amount_Cr",
-                 "Active_Days", "Symbols", "Top_Sector", "Concentration_Pct", "Flip_Ratio", "InstitutionScore", "Tag"]
-    op_cols = ["Broker", "BrokerName", "BrokerType", "Symbol", "Buy_Qty", "Sell_Qty", "Net_Qty",
-               "Buy_Amount_Cr", "Active_Days", "Flip_Ratio", "Concentration_Pct", "Avg_Buy_Cost", "Last_Price",
-               "Cost_vs_LTP_pct", "OperatorScore", "Tag"]
+    inst_cols = [
+        "Broker",
+        "BrokerName",
+        "BrokerType",
+        "Net_Qty",
+        "Buy_Qty",
+        "Sell_Qty",
+        "Buy_Amount_Cr",
+        "Active_Days",
+        "Symbols",
+        "Top_Sector",
+        "Concentration_Pct",
+        "Flip_Ratio",
+        "InstitutionScore",
+        "Tag",
+    ]
+    op_cols = [
+        "Broker",
+        "BrokerName",
+        "BrokerType",
+        "Symbol",
+        "Buy_Qty",
+        "Sell_Qty",
+        "Net_Qty",
+        "Buy_Amount_Cr",
+        "Active_Days",
+        "Flip_Ratio",
+        "Concentration_Pct",
+        "Avg_Buy_Cost",
+        "Last_Price",
+        "Cost_vs_LTP_pct",
+        "OperatorScore",
+        "Tag",
+    ]
 
     inst = inst[[c for c in inst_cols if c in inst.columns]].copy()
     op = op[[c for c in op_cols if c in op.columns]].copy()
@@ -696,6 +813,7 @@ def add_table(ws, df, name="Table1"):
     ncols = ws.max_column
     if nrows >= 2 and ncols >= 1:
         from openpyxl.utils import get_column_letter
+
         ref = f"A1:{get_column_letter(ncols)}{nrows}"
         tab = Table(displayName=name, ref=ref)
         tab.tableStyleInfo = TableStyleInfo(
@@ -720,6 +838,7 @@ def apply_recommendation_cf(ws, rec_col_name="Recommendation"):
     if not col or ws.max_row < 2:
         return
     from openpyxl.utils import get_column_letter
+
     cl = get_column_letter(col)
     rng = f"{cl}2:{cl}{ws.max_row}"
 
@@ -728,9 +847,15 @@ def apply_recommendation_cf(ws, rec_col_name="Recommendation"):
     fill_yellow = PatternFill("solid", fgColor="FFEB9C")
 
     first_cell = f"{cl}2"
-    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'UPPER({first_cell})="BUY"'], fill=fill_green, stopIfTrue=True))
-    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'UPPER({first_cell})="SELL / AVOID"'], fill=fill_red, stopIfTrue=True))
-    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'UPPER({first_cell})="HOLD"'], fill=fill_yellow, stopIfTrue=True))
+    ws.conditional_formatting.add(
+        rng, FormulaRule(formula=[f'UPPER({first_cell})="BUY"'], fill=fill_green, stopIfTrue=True)
+    )
+    ws.conditional_formatting.add(
+        rng, FormulaRule(formula=[f'UPPER({first_cell})="SELL / AVOID"'], fill=fill_red, stopIfTrue=True)
+    )
+    ws.conditional_formatting.add(
+        rng, FormulaRule(formula=[f'UPPER({first_cell})="HOLD"'], fill=fill_yellow, stopIfTrue=True)
+    )
 
 
 def apply_score_scale(ws, score_col_name="Score"):
@@ -738,12 +863,19 @@ def apply_score_scale(ws, score_col_name="Score"):
     if not col or ws.max_row < 2:
         return
     from openpyxl.utils import get_column_letter
+
     cl = get_column_letter(col)
     rng = f"{cl}2:{cl}{ws.max_row}"
     rule = ColorScaleRule(
-        start_type="min", start_value=0, start_color="F8696B",
-        mid_type="percentile", mid_value=50, mid_color="FFEB84",
-        end_type="max", end_value=100, end_color="63BE7B",
+        start_type="min",
+        start_value=0,
+        start_color="F8696B",
+        mid_type="percentile",
+        mid_value=50,
+        mid_color="FFEB84",
+        end_type="max",
+        end_value=100,
+        end_color="63BE7B",
     )
     ws.conditional_formatting.add(rng, rule)
 
@@ -882,7 +1014,10 @@ def main():
         price_latest = (
             pr[pr["TradeDate"] == w_latest][["Symbol", "Close", "LTP", "VWAP", "Vol", "Turnover", "Open", "High", "Low"]]
             .rename(columns={"LTP": "Last_Price", "Close": "Close_latest"})
-            if not pr.empty else pd.DataFrame(columns=["Symbol", "Close_latest", "Last_Price", "VWAP", "Vol", "Turnover", "Open", "High", "Low"])
+            if not pr.empty
+            else pd.DataFrame(
+                columns=["Symbol", "Close_latest", "Last_Price", "VWAP", "Vol", "Turnover", "Open", "High", "Low"]
+            )
         )
 
         # Floorsheet metrics
@@ -907,7 +1042,9 @@ def main():
                 Active_Days=("Net_Qty", lambda s: int((s > 0).sum())),
             )
         else:
-            bs_window = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr", "Active_Days"])
+            bs_window = pd.DataFrame(
+                columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr", "Active_Days"]
+            )
 
         # Pressure (dynamic top-N)
         pressure = compute_pressure(bs_window, topn=topn)
@@ -986,6 +1123,18 @@ def main():
             tb = tb.merge(brokers_master, on="Broker", how="left")
             tb["BrokerName"] = tb["BrokerName"].fillna("")
             tb["BrokerType"] = tb["BrokerType"].fillna("UNKNOWN")
+
+            # ✅ Only for Broker_by_Symbol sheet: add Sector after Symbol
+            tb = tb.merge(sector[["Symbol", "Sectors"]], on="Symbol", how="left")
+            tb = tb.rename(columns={"Sectors": "Sector"})
+
+            # put Sector right after Symbol
+            cols = list(tb.columns)
+            if "Symbol" in cols and "Sector" in cols:
+                cols.remove("Symbol")
+                cols.remove("Sector")
+                tb = tb[["Symbol", "Sector"] + cols]
+
             tb.insert(0, "Window", wname)
             broker_by_symbol_all.append(tb)
 
@@ -1039,7 +1188,7 @@ def main():
             bs_window,
             price_latest[["Symbol", "Last_Price"]] if not price_latest.empty else pd.DataFrame(),
             sector,
-            brokers_master
+            brokers_master,
         )
         inst.insert(0, "Window", wname)
         opr.insert(0, "Window", wname)
@@ -1048,8 +1197,16 @@ def main():
 
         # Trade setups (retail actionable shortlist)
         if not scored.empty:
-            sm_ctx = sm_sym[["Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Buy_Amount_Cr"]] if not sm_sym.empty else pd.DataFrame()
-            op_ctx = opr.groupby("Symbol", as_index=False)["OperatorScore"].max() if not opr.empty and "OperatorScore" in opr.columns else pd.DataFrame(columns=["Symbol", "OperatorScore"])
+            sm_ctx = (
+                sm_sym[["Symbol", "SmartMoneyScore", "SmartMoneySignal", "Net_Qty", "Net_Buy_Amount_Cr"]]
+                if not sm_sym.empty
+                else pd.DataFrame()
+            )
+            op_ctx = (
+                opr.groupby("Symbol", as_index=False)["OperatorScore"].max()
+                if not opr.empty and "OperatorScore" in opr.columns
+                else pd.DataFrame(columns=["Symbol", "OperatorScore"])
+            )
             sx = scored.merge(sm_ctx, on="Symbol", how="left").merge(op_ctx, on="Symbol", how="left")
             sx["OperatorScore"] = pd.to_numeric(sx.get("OperatorScore", np.nan), errors="coerce")
             sx["SetupScore"] = (
@@ -1069,13 +1226,13 @@ def main():
                 & (pd.to_numeric(sx.get("Vol_Surge", 1), errors="coerce") >= 1.5)
                 & (pd.to_numeric(sx.get("Buy_Pressure", 0), errors="coerce") > pd.to_numeric(sx.get("Sell_Pressure", 0), errors="coerce"))
                 & (sx.get("Close_gt_VWAP", False) == True),
-                "Setup_Tag"
+                "Setup_Tag",
             ] = "BUY_SETUP"
 
             sx.loc[
                 (pd.to_numeric(sx.get("Sell_Pressure", 0), errors="coerce") >= 0.50)
                 | (pd.to_numeric(sx.get("OperatorScore", 0), errors="coerce") >= 75),
-                "Setup_Tag"
+                "Setup_Tag",
             ] = "CAUTION"
 
             # Retail plan hints (not financial advice – generic)
@@ -1090,7 +1247,7 @@ def main():
                 "Vol_Surge", "Momentum", "Buy_Pressure", "Sell_Pressure",
                 "Range_%", "Close_Pos", "Risk_Flags",
                 "OperatorScore",
-                "Retail_Plan"
+                "Retail_Plan",
             ]
             sx = sx[[c for c in keep if c in sx.columns]].copy()
             for c in ["SetupScore", "Score", "SmartMoneyScore", "Vol_Surge", "Momentum", "Range_%", "Close_Pos", "Buy_Pressure", "Sell_Pressure", "OperatorScore"]:
@@ -1151,7 +1308,8 @@ def main():
         if not s7.empty and "SetupScore" in s7.columns:
             setup_chart = s7.sort_values("SetupScore", ascending=False).head(20)[
                 ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge", "Momentum"]
-                if "Momentum" in s7.columns else ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge"]
+                if "Momentum" in s7.columns
+                else ["Symbol", "SetupScore", "Setup_Tag", "Vol_Surge"]
             ].copy()
 
     readme = pd.DataFrame(
