@@ -1,8 +1,12 @@
 # priceaction_signals.py
 # ✅ Signals (7D/15D) + Circuits + Swing Scanner (3–10D)
 # ✅ Adds TrendAge + DaysFromBreakout (freshness + ageing)
-# ✅ Adds Smart-Money Sentiment Detector: Accumulation / Distribution / Shakeout
-# ✅ NEW: Sentiment_Top sheet (fast scan)
+# ✅ Smart-Money Sentiment Detector: Accumulation / Distribution / Shakeout
+# ✅ UPDATED: SentimentSignal is MULTI-DAY CONFIRMED (not single candle)
+#     - Accumulation: AccScore>=60 on 3 of last 4 days
+#     - Distribution: DistScore>=60 on 2 of last 4 days
+#     - Shakeout: ShakeScore>=70 on 1 of last 3 days
+# ✅ NEW: Sentiment_Top sheet uses confirmed logic
 # ✅ Loads latest available SharePrice_YYYY-MM-DD.csv files (<= today)
 
 import os, re, glob
@@ -45,7 +49,20 @@ MAX_BREAKOUT_AGE_TRACK = 60             # only search last 60 trading days (enou
 
 # Sentiment Top sheet
 SENTIMENT_TOP_N_EACH = 25               # top per category (acc/dist/shake)
-SENTIMENT_MIN_SCORE = 70                # include if score >= this
+
+# ✅ MULTI-DAY sentiment thresholds + windows (CONFIRMATION)
+SENT_ACC_TH = 60
+SENT_DIST_TH = 60
+SENT_SHAKE_TH = 70
+
+ACC_WIN = 4
+ACC_MIN_HITS = 3     # 3 of last 4
+
+DIST_WIN = 4
+DIST_MIN_HITS = 2    # 2 of last 4
+
+SHAKE_WIN = 3
+SHAKE_MIN_HITS = 1   # 1 of last 3 (event)
 
 
 # =========================
@@ -237,19 +254,21 @@ def add_features(g):
 
 # =========================
 # SENTIMENT / MANIPULATION DETECTOR (OHLCV + VWAP only)
+# ✅ UPDATED: SentimentSignal is MULTI-DAY confirmed (hit-count windows)
 # =========================
 def add_sentiment_detector(g):
     """
     Adds:
-      - LowerWickPct (0..1)
-      - BodyPct01 (0..1)
-      - RangePct_D (daily range %)
+      - LowerWickPct, BodyPct01, RangePct_D
       - VolAvg5, VolAvg20, VolRatio20
       - AccumulationScore (0..100)
       - DistributionScore (0..100)
       - ShakeoutScore (0..100)
-      - SentimentSignal
-      - SentimentReason
+      ✅ Multi-day confirmation:
+      - AccHits4, DistHits4, ShakeHits3
+      - AccConfirmed, DistConfirmed, ShakeConfirmed
+      - SentimentSignal (confirmed)
+      - SentimentReason (confirmed)
     """
     g = g.copy()
 
@@ -278,7 +297,7 @@ def add_sentiment_detector(g):
     g["HH20"] = g["High"].rolling(20).max()
     near_hh20 = (g["Close"] >= 0.97 * g["HH20"]).fillna(False)
 
-    # ---- Accumulation ----
+    # ---- Accumulation (single-day score) ----
     acc = np.zeros(len(g), dtype=float)
     acc += 20 * ((g["VolAvg5"] > g["VolAvg20"]).fillna(False)).astype(int)
     acc += 20 * ((g["RangePct_D"] <= (g["RangePct_MA10"] * 0.90)).fillna(False)).astype(int)
@@ -287,7 +306,7 @@ def add_sentiment_detector(g):
     acc += 20 * ((g["LowerWickPct"] > g["UpperWickPct"]).fillna(False)).astype(int)
     g["AccumulationScore"] = np.clip(acc, 0, 100).astype(int)
 
-    # ---- Distribution ----
+    # ---- Distribution (single-day score) ----
     dist = np.zeros(len(g), dtype=float)
     dist += 25 * ((g["VolRatio20"] >= 1.8).fillna(False)).astype(int)
     dist += 25 * ((g["RET1"] <= 0.50).fillna(False)).astype(int)
@@ -296,7 +315,7 @@ def add_sentiment_detector(g):
     dist += 10 * near_hh20.astype(int)
     g["DistributionScore"] = np.clip(dist, 0, 100).astype(int)
 
-    # ---- Shakeout ----
+    # ---- Shakeout (single-day score) ----
     prev_low = g["Low"].shift(1)
     shake = np.zeros(len(g), dtype=float)
     shake += 50 * ((g["Low"] < prev_low) & (g["Close"] > prev_low)).fillna(False).astype(int)
@@ -304,24 +323,38 @@ def add_sentiment_detector(g):
     shake += 20 * ((g["VolRatio20"] >= 1.5).fillna(False)).astype(int)
     g["ShakeoutScore"] = np.clip(shake, 0, 100).astype(int)
 
-    # ---- Final signal ----
+    # -----------------------
+    # ✅ MULTI-DAY CONFIRMATION
+    # -----------------------
+    acc_hits = (g["AccumulationScore"] >= SENT_ACC_TH).rolling(ACC_WIN).sum()
+    dist_hits = (g["DistributionScore"] >= SENT_DIST_TH).rolling(DIST_WIN).sum()
+    shake_hits = (g["ShakeoutScore"] >= SENT_SHAKE_TH).rolling(SHAKE_WIN).sum()
+
+    g["AccHits4"] = acc_hits
+    g["DistHits4"] = dist_hits
+    g["ShakeHits3"] = shake_hits
+
+    g["AccConfirmed"] = (acc_hits >= ACC_MIN_HITS).fillna(False)
+    g["DistConfirmed"] = (dist_hits >= DIST_MIN_HITS).fillna(False)
+    g["ShakeConfirmed"] = (shake_hits >= SHAKE_MIN_HITS).fillna(False)
+
+    # Priority: Distribution > Shakeout > Accumulation
     sig = np.array(["NEUTRAL"] * len(g), dtype=object)
-    sig[g["AccumulationScore"] >= SENTIMENT_MIN_SCORE] = "ACCUMULATION"
-    sig[g["ShakeoutScore"] >= SENTIMENT_MIN_SCORE] = "SHAKEOUT"
-    sig[g["DistributionScore"] >= SENTIMENT_MIN_SCORE] = "DISTRIBUTION"
+    sig[g["AccConfirmed"]] = "ACCUMULATION"
+    sig[g["ShakeConfirmed"]] = "SHAKEOUT"
+    sig[g["DistConfirmed"]] = "DISTRIBUTION"
     g["SentimentSignal"] = sig
 
-    # ---- Reasons ----
     reasons = []
     for i in range(len(g)):
         r = []
-        if g["AccumulationScore"].iloc[i] >= SENTIMENT_MIN_SCORE:
-            r += ["VolAvg5>VolAvg20", "tight range", "body<40%", "Close>VWAP"]
-        if g["ShakeoutScore"].iloc[i] >= SENTIMENT_MIN_SCORE:
-            r += ["failed breakdown", "long lower wick", "vol spike"]
-        if g["DistributionScore"].iloc[i] >= SENTIMENT_MIN_SCORE:
-            r += ["climax vol", "upper wick rejection", "no progress", "Close<VWAP"]
-        reasons.append(", ".join(r) if r else "")
+        if bool(g["AccConfirmed"].iloc[i]):
+            r.append(f"Acc≥{SENT_ACC_TH} on {int(g['AccHits4'].iloc[i])}/{ACC_WIN} days")
+        if bool(g["ShakeConfirmed"].iloc[i]):
+            r.append(f"Shake≥{SENT_SHAKE_TH} on {int(g['ShakeHits3'].iloc[i])}/{SHAKE_WIN} days")
+        if bool(g["DistConfirmed"].iloc[i]):
+            r.append(f"Dist≥{SENT_DIST_TH} on {int(g['DistHits4'].iloc[i])}/{DIST_WIN} days")
+        reasons.append("; ".join(r) if r else "")
     g["SentimentReason"] = reasons
 
     return g
@@ -739,7 +772,6 @@ def color_scale(ws, col_name):
 
 
 def number_format(ws, mapping):
-    # ✅ FIXED (no typo)
     header = [c.value for c in ws[1]]
     for col_name, fmt in mapping.items():
         if col_name in header:
@@ -780,8 +812,10 @@ FINAL_COLS = [
     "Slope20","R2_20",
     "TrendHealth","VolExpansionFlag","FalseBreakoutFlag","FalseBreakoutScore",
     "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
-    # Sentiment
+    # Sentiment (scores + confirmation fields)
     "AccumulationScore","DistributionScore","ShakeoutScore",
+    "AccHits4","DistHits4","ShakeHits3",
+    "AccConfirmed","DistConfirmed","ShakeConfirmed",
     "SentimentSignal","SentimentReason",
     "Reason"
 ]
@@ -941,9 +975,19 @@ def build_sheet_df(data, sector_df, mode="7D"):
             "FollowThrough_W": followthrough,
             "RetestBuy_W": retestbuy,
 
+            # sentiment scores + confirmation fields
             "AccumulationScore": int(last.get("AccumulationScore")) if pd.notna(last.get("AccumulationScore")) else None,
             "DistributionScore": int(last.get("DistributionScore")) if pd.notna(last.get("DistributionScore")) else None,
             "ShakeoutScore": int(last.get("ShakeoutScore")) if pd.notna(last.get("ShakeoutScore")) else None,
+
+            "AccHits4": int(last.get("AccHits4")) if pd.notna(last.get("AccHits4")) else None,
+            "DistHits4": int(last.get("DistHits4")) if pd.notna(last.get("DistHits4")) else None,
+            "ShakeHits3": int(last.get("ShakeHits3")) if pd.notna(last.get("ShakeHits3")) else None,
+
+            "AccConfirmed": bool(last.get("AccConfirmed", False)),
+            "DistConfirmed": bool(last.get("DistConfirmed", False)),
+            "ShakeConfirmed": bool(last.get("ShakeConfirmed", False)),
+
             "SentimentSignal": last.get("SentimentSignal", "NEUTRAL"),
             "SentimentReason": last.get("SentimentReason", ""),
 
@@ -986,7 +1030,10 @@ SWING_COLS = [
     "Date","Symbol","Sector","Company",
     "SwingCategory","SwingSignalType","SwingScore",
     "DaysFromBreakout","TrendAge",
-    "AccumulationScore","DistributionScore","ShakeoutScore","SentimentSignal",
+    "AccumulationScore","DistributionScore","ShakeoutScore",
+    "AccHits4","DistHits4","ShakeHits3",
+    "AccConfirmed","DistConfirmed","ShakeConfirmed",
+    "SentimentSignal",
     "Close","VWAP","VWAP_Dist%","Volume","ValueTraded","VolSpike20",
     "EMA10","EMA20","EMA50","RSI14","ATR14","Range%","ClosePos","Body%",
     "Entry","Stop","T1_1.5R","T2_2.5R","T3_3R",
@@ -1099,12 +1146,15 @@ def build_swing_scanner_df(data, sector_df):
             elif trend_age >= 9:
                 score -= 6; reasons.append("Maturing trend (age>=9)")
 
-        # sentiment risk penalty (distribution)
+        # sentiment risk penalty (use confirmed distribution)
+        dist_confirmed = bool(last.get("DistConfirmed", False))
         dist_score = int(last.get("DistributionScore")) if pd.notna(last.get("DistributionScore")) else 0
-        if dist_score >= 70:
-            score -= 12; reasons.append("Distribution risk (smart-money exit)")
+        if dist_confirmed:
+            score -= 12; reasons.append("Distribution risk (confirmed)")
+        elif dist_score >= 70:
+            score -= 8; reasons.append("Distribution risk (1-day)")
         elif dist_score >= 55:
-            score -= 6; reasons.append("Mild distribution risk")
+            score -= 4; reasons.append("Mild distribution risk")
 
         if too_extended:
             score -= 10; reasons.append("Extended vs VWAP")
@@ -1150,6 +1200,15 @@ def build_swing_scanner_df(data, sector_df):
             "AccumulationScore": int(last.get("AccumulationScore")) if pd.notna(last.get("AccumulationScore")) else None,
             "DistributionScore": int(last.get("DistributionScore")) if pd.notna(last.get("DistributionScore")) else None,
             "ShakeoutScore": int(last.get("ShakeoutScore")) if pd.notna(last.get("ShakeoutScore")) else None,
+
+            "AccHits4": int(last.get("AccHits4")) if pd.notna(last.get("AccHits4")) else None,
+            "DistHits4": int(last.get("DistHits4")) if pd.notna(last.get("DistHits4")) else None,
+            "ShakeHits3": int(last.get("ShakeHits3")) if pd.notna(last.get("ShakeHits3")) else None,
+
+            "AccConfirmed": bool(last.get("AccConfirmed", False)),
+            "DistConfirmed": bool(last.get("DistConfirmed", False)),
+            "ShakeConfirmed": bool(last.get("ShakeConfirmed", False)),
+
             "SentimentSignal": last.get("SentimentSignal", "NEUTRAL"),
 
             "Close": float(last["Close"]),
@@ -1246,7 +1305,7 @@ def build_circuit_watchlist(df):
         10 * (x["StretchFlag"].fillna("") == "STRETCHED").astype(int) +
         10 * (x["VolPriceFlag_W"].fillna("") == "DIVERGENCE").astype(int) +
         8  * x["FalseBreakoutFlag"].fillna(False).astype(int) +
-        8  * (x.get("DistributionScore", 0).fillna(0) >= 70).astype(int)
+        8  * x.get("DistConfirmed", False).fillna(False).astype(int)
     )
 
     x["UpCircuitScore"] = (up_base - penalty).clip(0, 100).astype(int)
@@ -1273,6 +1332,7 @@ def build_circuit_watchlist(df):
         "RET1_%","RET2_%","RET4_%",
         "Volume","VMA7","UpperWickPct",
         "SentimentSignal","AccumulationScore","DistributionScore","ShakeoutScore",
+        "AccHits4","DistHits4","ShakeHits3","DistConfirmed",
         "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
         "Stock Signal","BuyStrength","Bias","Reason",
         "CircuitPick"
@@ -1283,6 +1343,7 @@ def build_circuit_watchlist(df):
         "RET1_%","RET2_%","RET4_%",
         "Volume","VMA7","UpperWickPct",
         "SentimentSignal","AccumulationScore","DistributionScore","ShakeoutScore",
+        "AccHits4","DistHits4","ShakeHits3","DistConfirmed",
         "VolPriceFlag_W","Distribution_W","Absorption_W","FollowThrough_W","RetestBuy_W",
         "Stock Signal","SellStrength","Bias","Reason",
         "CircuitPick"
@@ -1298,43 +1359,44 @@ def build_circuit_watchlist(df):
 
 
 # =========================
-# NEW: SENTIMENT TOP SHEET
+# NEW: SENTIMENT TOP SHEET (confirmed logic)
 # =========================
 def build_sentiment_top(df7):
     """
-    Fast scanner:
-      - Top ACCUMULATION
-      - Top DISTRIBUTION
-      - Top SHAKEOUT
-    Based on df7 (latest per symbol) which already contains sentiment scores.
+    Fast scanner (confirmed):
+      - Top ACCUMULATION: AccConfirmed True (rank by AccHits4)
+      - Top DISTRIBUTION: DistConfirmed True (rank by DistHits4)
+      - Top SHAKEOUT: ShakeConfirmed True (rank by ShakeHits3)
     """
     if df7 is None or df7.empty:
         return pd.DataFrame(columns=[
             "Category","Date","Symbol","Sector","Company",
             "SentimentSignal","AccumulationScore","DistributionScore","ShakeoutScore",
+            "AccHits4","DistHits4","ShakeHits3",
             "Close","Volume","RankScore","EarlyScore","Reason","SentimentReason"
         ])
 
     base_cols = [
         "Date","Symbol","Sector","Company",
         "SentimentSignal","AccumulationScore","DistributionScore","ShakeoutScore",
+        "AccHits4","DistHits4","ShakeHits3",
         "Close","Volume","RankScore","EarlyScore","Reason","SentimentReason"
     ]
     x = df7.copy()
-    for c in base_cols:
+    for c in base_cols + ["AccConfirmed","DistConfirmed","ShakeConfirmed"]:
         if c not in x.columns:
             x[c] = None
 
-    acc = x[x["AccumulationScore"].fillna(0) >= SENTIMENT_MIN_SCORE].copy()
-    acc = acc.sort_values(["AccumulationScore","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
+    acc = x[x["AccConfirmed"].fillna(False)].copy()
+    acc = acc.sort_values(["AccHits4","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
     acc.insert(0, "Category", "ACCUMULATION")
 
-    dist = x[x["DistributionScore"].fillna(0) >= SENTIMENT_MIN_SCORE].copy()
-    dist = dist.sort_values(["DistributionScore","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
+    dist = x[x["DistConfirmed"].fillna(False)].copy()
+    dist = dist.sort_values(["DistHits4","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
     dist.insert(0, "Category", "DISTRIBUTION")
 
-    shak = x[x["ShakeoutScore"].fillna(0) >= SENTIMENT_MIN_SCORE].copy()
-    shak = shak.sort_values(["ShakeoutScore","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
+    shak = x[x["ShakeConfirmed"].fillna(False)].copy()
+    shak = shak.sort_values(["ShakeHits3","RankScore","EarlyScore"], ascending=[False, False, False]).head(SENTIMENT_TOP_N_EACH)
     shak.insert(0, "Category", "SHAKEOUT")
 
     out = pd.concat([acc, dist, shak], ignore_index=True)
@@ -1361,7 +1423,6 @@ def main():
 
     swing_buy, swing_watch, swing_avoid, swing_ranked = build_swing_scanner_df(data, sector_df)
 
-    # NEW sentiment top
     sentiment_top = build_sentiment_top(df7)
 
     wb = Workbook()
@@ -1391,6 +1452,9 @@ def main():
         "AccumulationScore":"0",
         "DistributionScore":"0",
         "ShakeoutScore":"0",
+        "AccHits4":"0",
+        "DistHits4":"0",
+        "ShakeHits3":"0",
 
         # Swing formats
         "SwingScore":"0",
@@ -1421,14 +1485,18 @@ def main():
     ws1 = wb["Signals_7D"]
     write_table(ws1, df7, "Signals7DTbl", header_color="1F4E79")
     number_format(ws1, fmt_map)
-    for col in ["RankScore","Confidence_Advanced","EarlyScore","FalseBreakoutScore","AccumulationScore","DistributionScore","ShakeoutScore"]:
+    for col in ["RankScore","Confidence_Advanced","EarlyScore","FalseBreakoutScore",
+                "AccumulationScore","DistributionScore","ShakeoutScore",
+                "AccHits4","DistHits4","ShakeHits3"]:
         color_scale(ws1, col)
 
     # Sheet 2: Signals_15D
     ws2 = wb.create_sheet("Signals_15D")
     write_table(ws2, df15, "Signals15DTbl", header_color="1F4E79")
     number_format(ws2, fmt_map)
-    for col in ["RankScore","Confidence_Advanced","EarlyScore","FalseBreakoutScore","AccumulationScore","DistributionScore","ShakeoutScore"]:
+    for col in ["RankScore","Confidence_Advanced","EarlyScore","FalseBreakoutScore",
+                "AccumulationScore","DistributionScore","ShakeoutScore",
+                "AccHits4","DistHits4","ShakeHits3"]:
         color_scale(ws2, col)
 
     # Sheet 3: Circuit_UP_Tomorrow
@@ -1473,11 +1541,11 @@ def main():
     for col in ["SwingScore","TrendAge","DaysFromBreakout","DistributionScore"]:
         color_scale(ws8, col)
 
-    # Sheet 9: Sentiment_Top (NEW)
+    # Sheet 9: Sentiment_Top (confirmed)
     ws9 = wb.create_sheet("Sentiment_Top")
     write_table(ws9, sentiment_top, "SentimentTopTbl", header_color="6A1B9A")
     number_format(ws9, fmt_map)
-    for col in ["AccumulationScore","DistributionScore","ShakeoutScore","RankScore","EarlyScore"]:
+    for col in ["AccHits4","DistHits4","ShakeHits3","RankScore","EarlyScore"]:
         color_scale(ws9, col)
     apply_row_fill_by_value(ws9, "Category", "ACCUMULATION", "E8F5E9")
     apply_row_fill_by_value(ws9, "Category", "DISTRIBUTION", "FFEBEE")
