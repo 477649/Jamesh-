@@ -719,11 +719,13 @@ def build_institution_operator(
         np.nan,
     )
     op["Cost_vs_LTP_pct"] = np.where(
-        op["Last_Price"].notna() & (op["Last_Price"] > 0) & op["Avg_Buy_Cost"].notna(),
-        (op["Avg_Buy_Cost"] / op["Last_Price"] - 1) * 100,
-        np.nan,
+         op["Avg_Buy_Cost"].notna()
+         & (op["Avg_Buy_Cost"] > 0)
+         & op["Last_Price"].notna()
+         & (op["Last_Price"] > 0),
+         ((op["Last_Price"] - op["Avg_Buy_Cost"]) / op["Avg_Buy_Cost"]) * 100,
+         np.nan
     )
-
     op = op.merge(broker_master, on="Broker", how="left")
     op["BrokerName"] = op["BrokerName"].fillna("")
     op["BrokerType"] = op["BrokerType"].fillna("UNKNOWN")
