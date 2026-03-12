@@ -117,7 +117,7 @@ def scrape_current_page(driver, max_retries=5):
         except Exception:
             pass
 
-        time.sleep(0.8)
+        time.sleep(0.2)
 
     return []
 
@@ -162,7 +162,7 @@ def click_next_page(driver, wait, max_retries=3):
             before = get_page_marker(driver)
 
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_btn)
-            time.sleep(0.3)
+            time.sleep(0.1)
 
             try:
                 driver.execute_script("arguments[0].click();", next_btn)
@@ -170,11 +170,10 @@ def click_next_page(driver, wait, max_retries=3):
                 next_btn.click()
 
             wait.until(lambda d: get_page_marker(d) not in (None, before))
-            time.sleep(1.2)
             return True
 
         except (TimeoutException, StaleElementReferenceException, ElementClickInterceptedException):
-            time.sleep(1)
+            time.sleep(0.3)
 
     print("Failed to move to next page after retries.")
     return False
