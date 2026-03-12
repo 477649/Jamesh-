@@ -77,30 +77,3 @@ jobs:
           # ✅ Fix push rejection: sync with remote then push
           git pull --rebase origin main
           git push origin main
-
-      # ===============================
-      # 📊 Publish data for GitHub Pages dashboard
-      # ===============================
-
-      - name: Install dashboard publish dependencies
-        run: |
-          pip install pandas openpyxl
-
-      - name: Build dashboard data (docs/data)
-        run: |
-          python tools/publish_to_pages.py
-
-      - name: Commit and push dashboard data
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          # Add dashboard data only
-          git add docs/data/index.json docs/data/*.csv || true
-
-          # Commit if there are changes
-          git commit -m "Update dashboard data for GitHub Pages" || echo "No dashboard changes"
-
-          # Sync & push
-          git pull --rebase origin main
-          git push origin main
