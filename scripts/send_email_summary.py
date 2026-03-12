@@ -1,5 +1,6 @@
 import os
 import smtplib
+import html
 from pathlib import Path
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -17,10 +18,8 @@ def load_latest_report():
         key=lambda x: x.stat().st_mtime,
         reverse=True,
     )
-
     if not reports:
         raise FileNotFoundError(f"No trading report found in {REPORT_DIR}")
-
     return reports[0]
 
 
@@ -36,282 +35,401 @@ def format_percent_cols(df, cols):
     df = df.copy()
     for col in cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").map(
-                lambda x: f"{x:.2f}%" if pd.notna(x) else ""
-            )
+            series = pd.to_numeric(df[col], errors="coerce")
+            df[col] = series.map(lambda x: f"{x:.2f}%" if pd.notna(x) else "")
     return df
 
 
-def format_html_table(df, title):
-    if df is None or df.empty:
-        return f"<h3 style='margin-bottom:8px;'>{title}</h3><p>No data available.</p>"
+def normalize_columns(df):
+    df = df.copy()
 
-    html = f"""
-    <h3 style="margin-bottom:8px;">{title}</h3>
-    <table border="1" cellpadding="6" cellspacing="0"
-           style="border-collapse:collapse; font-family:Arial; font-size:13px; margin-bottom:18px;">
-      <tr style="background-color:#d9eaf7;">
-    """
+    def norm(name):
+        return (
+            str(name)
+            .strip()
+            .replace("%", "pct")
+            .replace("/", "_")
+            .replace("-", "_")
+            .replace(" ", "_")
+            .lower()
+        )
+
+    df.columns = [norm(col) for col in df.columns]
+
+    alias_map = {
+        "window": "window",
+        "symbol": "symbol",
+        "company": "company",
+        "sectors": "sector",
+        "sector": "sector",
+        "last_price": "last_price",
+        "lastprice": "last_price",
+        "vwap": "vwap",
+        "momentum": "momentum",
+        "range_pct": "range_pct",
+        "range": "range_pct",
+        "vol_surge": "vol_surge",
+        "volume_surge": "vol_surge",
+        "price_vs_vwap_pct": "price_vs_vwap_pct",
+        "smartmoneyscore": "smart_money_score",
+        "smart_money_score": "smart_money_score",
+        "smartmoneysignal": "signal",
+        "smart_money_signal": "signal",
+        "signal": "signal",
+        "total_qty": "quantity",
+        "qty": "quantity",
+        "trades": "trades",
+        "score": "score",
+        "recommendation": "recommendation",
+        "close_start": "start_price",
+        "close_end": "last_price",
+        "change_pct": "change_pct",
+    }
+
+    rename_map = {}
+    for col in df.columns:
+        if col in alias_map:
+            rename_map[col] = alias_map[col]
+
+    df.rename(columns=rename_map, inplace=True)
+    return df
+
+
+def get_cell_style(column, value):
+    text = "" if pd.isna(value) else str(value).strip().lower()
+
+    if column in ["Signal", "Recommendation"]:
+        if any(word in text for word in ["bull", "buy", "strong", "positive"]):
+            return "background-color:#e8f5e9; color:#1b5e20; font-weight:bold;"
+        if any(word in text for word in ["bear", "sell", "weak", "negative"]):
+            return "background-color:#ffebee; color:#b71c1c; font-weight:bold;"
+
+    if column in ["Momentum", "Change %", "Range %", "Price vs VWAP %"]:
+        try:
+            num = float(str(value).replace("%", "").replace(",", "").strip())
+            if num > 0:
+                return "color:#1b5e20; font-weight:bold;"
+            if num < 0:
+                return "color:#b71c1c; font-weight:bold;"
+        except Exception:
+            pass
+
+    return ""
+
+
+def format_html_table(df, title):
+    title_html = html.escape(title)
+
+    if df is None or df.empty:
+        return f"<h3 style='margin-bottom:8px;color:#0b3d91;'>{title_html}</h3><p>No data available.</p>"
+
+    parts = [
+        f'<h3 style="margin-bottom:8px;color:#0b3d91;font-family:Arial;">{title_html}</h3>',
+        '<table border="1" cellpadding="6" cellspacing="0" '
+        'style="border-collapse:collapse; font-family:Arial; font-size:13px; margin-bottom:18px; width:100%;">',
+        '<tr style="background-color:#d9eaf7;">',
+    ]
 
     for col in df.columns:
-        html += f"<th>{col}</th>"
-    html += "</tr>"
+        parts.append(f"<th style='padding:8px;text-align:center;'>{html.escape(str(col))}</th>")
+    parts.append("</tr>")
 
     for _, row in df.iterrows():
-        html += "<tr>"
-        for val in row:
-            html += f"<td>{'' if pd.isna(val) else val}</td>"
-        html += "</tr>"
+        parts.append("<tr>")
+        for col, val in row.items():
+            cell = "" if pd.isna(val) else html.escape(str(val))
+            style = get_cell_style(col, val)
+            parts.append(f"<td style='padding:6px;text-align:center;{style}'>{cell}</td>")
+        parts.append("</tr>")
 
-    html += "</table>"
-    return html
+    parts.append("</table>")
+    return "".join(parts)
+
+
+def build_summary_box(top_pick_df, sm1_df, movers_df, vol_df):
+    top_pick = top_pick_df.iloc[0]["Symbol"] if not top_pick_df.empty else "-"
+    smart_money = sm1_df.iloc[0]["Symbol"] if not sm1_df.empty else "-"
+    highest_mover = movers_df.iloc[0]["Symbol"] if not movers_df.empty else "-"
+    most_volatile = vol_df.iloc[0]["Symbol"] if not vol_df.empty else "-"
+
+    return f"""
+    <div style="
+        border:1px solid #cfd8dc;
+        background:#f8fbfd;
+        padding:12px 14px;
+        margin-bottom:18px;
+        font-family:Arial;
+        font-size:13px;
+        border-radius:6px;">
+      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Snapshot</h3>
+      <p style="margin:4px 0;"><b>Top Pick Today:</b> {html.escape(str(top_pick))}</p>
+      <p style="margin:4px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
+      <p style="margin:4px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
+      <p style="margin:4px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
+    </div>
+    """
+
+
+def filter_window(df, window_value):
+    if "window" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["window"].astype(str).str.strip().str.upper() == window_value.upper()].copy()
+
+
+def prepare_table(df, columns_map, round_cols=None, percent_cols=None, sort_by=None, ascending=False, limit=None):
+    out = df.copy()
+
+    if sort_by and sort_by in out.columns:
+        out = out.sort_values(sort_by, ascending=ascending)
+
+    if limit:
+        out = out.head(limit).copy()
+
+    result = pd.DataFrame()
+    for source_col, display_col in columns_map:
+        result[display_col] = out[source_col] if source_col in out.columns else ""
+
+    if round_cols:
+        result = safe_round(result, round_cols)
+
+    if percent_cols:
+        result = format_percent_cols(result, percent_cols)
+
+    return result
 
 
 def build_email_body(report_path):
-    smart_money = pd.read_excel(report_path, sheet_name="Smart_Money")
-    price_movers = pd.read_excel(report_path, sheet_name="Price_Movers")
-    symbol_summary = pd.read_excel(report_path, sheet_name="Symbol_Summary")
-    top_picks = pd.read_excel(report_path, sheet_name="Top_Picks")
+    smart_money = normalize_columns(pd.read_excel(report_path, sheet_name="Smart_Money"))
+    price_movers = normalize_columns(pd.read_excel(report_path, sheet_name="Price_Movers"))
+    symbol_summary = normalize_columns(pd.read_excel(report_path, sheet_name="Symbol_Summary"))
+    top_picks = normalize_columns(pd.read_excel(report_path, sheet_name="Top_Picks"))
 
-    # -----------------------------
-    # Best Smart Money Stocks
-    # -----------------------------
-    sm_cols = [
-        "Symbol",
-        "Sectors",
-        "Last_Price",
-        "VWAP",
-        "Momentum",
-        "SmartMoneyScore",
-        "SmartMoneySignal",
+    # Smart Money
+    smart_money_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("last_price", "Last Price"),
+        ("vwap", "VWAP"),
+        ("momentum", "Momentum"),
+        ("range_pct", "Range %"),
+        ("vol_surge", "Volume Surge"),
+        ("price_vs_vwap_pct", "Price vs VWAP %"),
+        ("smart_money_score", "Smart Money Score"),
+        ("signal", "Signal"),
     ]
 
-    sm_1d = (
-        smart_money[smart_money["Window"] == "1D"]
-        .sort_values("SmartMoneyScore", ascending=False)
-        .head(5)
-        .copy()
-    )
-    sm_7d = (
-        smart_money[smart_money["Window"] == "7D"]
-        .sort_values("SmartMoneyScore", ascending=False)
-        .head(5)
-        .copy()
-    )
-    sm_15d = (
-        smart_money[smart_money["Window"] == "15D"]
-        .sort_values("SmartMoneyScore", ascending=False)
-        .head(5)
-        .copy()
+    sm1 = prepare_table(
+        filter_window(smart_money, "1D"),
+        smart_money_map,
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        sort_by="smart_money_score",
+        ascending=False,
+        limit=5,
     )
 
-    sm_1d = sm_1d[[c for c in sm_cols if c in sm_1d.columns]]
-    sm_7d = sm_7d[[c for c in sm_cols if c in sm_7d.columns]]
-    sm_15d = sm_15d[[c for c in sm_cols if c in sm_15d.columns]]
-
-    for df in [sm_1d, sm_7d, sm_15d]:
-        df.rename(
-            columns={
-                "Sectors": "Sector",
-                "Last_Price": "Last Price",
-                "SmartMoneyScore": "Smart Money Score",
-                "SmartMoneySignal": "Signal",
-            },
-            inplace=True,
-        )
-
-    sm_1d = safe_round(sm_1d, ["Last Price", "VWAP", "Smart Money Score"])
-    sm_7d = safe_round(sm_7d, ["Last Price", "VWAP", "Smart Money Score"])
-    sm_15d = safe_round(sm_15d, ["Last Price", "VWAP", "Smart Money Score"])
-
-    sm_1d = format_percent_cols(sm_1d, ["Momentum"])
-    sm_7d = format_percent_cols(sm_7d, ["Momentum"])
-    sm_15d = format_percent_cols(sm_15d, ["Momentum"])
-
-    # -----------------------------
-    # Top Pick Stocks - 1 Day (Top 7)
-    # Source: Top_Picks
-    # -----------------------------
-    top_picks_1d = (
-        top_picks[top_picks["Window"] == "1D"]
-        .sort_values("Total_Qty", ascending=False)
-        .head(7)
-        .copy()
+    sm7 = prepare_table(
+        filter_window(smart_money, "7D"),
+        smart_money_map,
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        sort_by="smart_money_score",
+        ascending=False,
+        limit=5,
     )
 
-    top_picks_1d = top_picks_1d[
-        [c for c in ["Symbol", "Sectors", "Last_Price", "VWAP", "Total_Qty", "Trades"] if c in top_picks_1d.columns]
+    sm15 = prepare_table(
+        filter_window(smart_money, "15D"),
+        smart_money_map,
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        sort_by="smart_money_score",
+        ascending=False,
+        limit=5,
+    )
+
+    # Top Picks
+    top_picks_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("last_price", "Last Price"),
+        ("vwap", "VWAP"),
+        ("quantity", "Quantity"),
+        ("trades", "Trades"),
     ]
 
-    top_picks_1d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Last_Price": "Last Price",
-            "Total_Qty": "Quantity",
-        },
-        inplace=True,
+    tp1 = prepare_table(
+        filter_window(top_picks, "1D"),
+        top_picks_map,
+        round_cols=["Last Price", "VWAP"],
+        sort_by="quantity",
+        ascending=False,
+        limit=5,
     )
 
-    top_picks_1d = safe_round(top_picks_1d, ["Last Price", "VWAP"])
-
-    # -----------------------------
-    # Top Pick Stocks - Last 7 Days (Top 7)
-    # Source: Top_Picks
-    # -----------------------------
-    top_picks_7d = (
-        top_picks[top_picks["Window"] == "7D"]
-        .sort_values("Total_Qty", ascending=False)
-        .head(7)
-        .copy()
+    tp7 = prepare_table(
+        filter_window(top_picks, "7D"),
+        top_picks_map,
+        round_cols=["Last Price", "VWAP"],
+        sort_by="quantity",
+        ascending=False,
+        limit=5,
     )
 
-    top_picks_7d = top_picks_7d[
-        [c for c in ["Symbol", "Sectors", "Last_Price", "VWAP", "Total_Qty", "Trades"] if c in top_picks_7d.columns]
+    # Swing Trading
+    swing_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("last_price", "Last Price"),
+        ("momentum", "Momentum"),
+        ("range_pct", "Range %"),
+        ("vol_surge", "Volume Surge"),
+        ("score", "Score"),
+        ("recommendation", "Recommendation"),
     ]
 
-    top_picks_7d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Last_Price": "Last Price",
-            "Total_Qty": "Quantity",
-        },
-        inplace=True,
+    swing = prepare_table(
+        filter_window(symbol_summary, "7D"),
+        swing_map,
+        round_cols=["Last Price", "Range %", "Volume Surge", "Score"],
+        percent_cols=["Momentum"],
+        sort_by="score",
+        ascending=False,
+        limit=5,
     )
 
-    top_picks_7d = safe_round(top_picks_7d, ["Last Price", "VWAP"])
-
-    # -----------------------------
-    # Best Top 5 Swing Trading Stocks - 7 Day
-    # Source: Symbol_Summary
-    # -----------------------------
-    swing_7d = (
-        symbol_summary[symbol_summary["Window"] == "7D"]
-        .sort_values("Score", ascending=False)
-        .head(5)
-        .copy()
-    )
-
-    swing_7d = swing_7d[
-        [c for c in ["Symbol", "Sectors", "Last_Price", "Momentum", "Range_%", "Vol_Surge", "Score", "Recommendation"] if c in swing_7d.columns]
+    # Highest Movement
+    movers_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("start_price", "Start Price"),
+        ("last_price", "Last Price"),
+        ("change_pct", "Change %"),
     ]
 
-    swing_7d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Last_Price": "Last Price",
-            "Range_%": "Range %",
-            "Vol_Surge": "Volume Surge",
-        },
-        inplace=True,
+    movers = prepare_table(
+        filter_window(price_movers, "7D"),
+        movers_map,
+        round_cols=["Start Price", "Last Price"],
+        percent_cols=["Change %"],
+        sort_by="change_pct",
+        ascending=False,
+        limit=7,
     )
 
-    swing_7d = safe_round(swing_7d, ["Last Price", "Range %", "Volume Surge", "Score"])
-    swing_7d = format_percent_cols(swing_7d, ["Momentum"])
-
-    # -----------------------------
-    # Highest Movement Stocks - 7 Day
-    # Source: Price_Movers
-    # -----------------------------
-    pm_7d = (
-        price_movers[price_movers["Window"] == "7D"]
-        .sort_values("Change_%", ascending=False)
-        .head(7)
-        .copy()
-    )
-
-    pm_7d = pm_7d[
-        [c for c in ["Symbol", "Sectors", "Close_start", "Close_end", "Change_%"] if c in pm_7d.columns]
+    # Most Volatile
+    vol_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("last_price", "Last Price"),
+        ("range_pct", "Range %"),
+        ("vol_surge", "Volume Surge"),
     ]
 
-    pm_7d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Close_start": "Start Price",
-            "Close_end": "Last Price",
-            "Change_%": "Change %",
-        },
-        inplace=True,
+    vol = prepare_table(
+        filter_window(symbol_summary, "7D"),
+        vol_map,
+        round_cols=["Last Price", "Range %", "Volume Surge"],
+        percent_cols=["Range %"],
+        sort_by="range_pct",
+        ascending=False,
+        limit=7,
     )
-
-    pm_7d = safe_round(pm_7d, ["Start Price", "Last Price"])
-    pm_7d = format_percent_cols(pm_7d, ["Change %"])
-
-    # -----------------------------
-    # Most Volatile Stocks - 7 Day
-    # Source: Symbol_Summary
-    # -----------------------------
-    ss_7d = symbol_summary[symbol_summary["Window"] == "7D"].copy()
-
-    volatile_7d = ss_7d.sort_values("Range_%", ascending=False).head(7).copy()
-
-    volatile_7d = volatile_7d[
-        [c for c in ["Symbol", "Sectors", "Last_Price", "Range_%", "Vol_Surge"] if c in volatile_7d.columns]
-    ]
-
-    volatile_7d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Last_Price": "Last Price",
-            "Range_%": "Range %",
-            "Vol_Surge": "Volume Surge",
-        },
-        inplace=True,
-    )
-
-    volatile_7d = safe_round(volatile_7d, ["Last Price", "Range %", "Volume Surge"])
 
     report_date = pd.Timestamp.now().strftime("%Y-%m-%d")
 
-    html = f"""
+    header_html = f"""
+    <div style="
+        background:linear-gradient(90deg,#0b3d91,#1565c0);
+        color:white;
+        padding:16px 20px;
+        border-radius:8px;
+        margin-bottom:18px;">
+        <h2 style="margin:0;font-family:Arial;">NEPSE Smart Money & Trading Summary</h2>
+        <p style="margin:6px 0 0 0;font-family:Arial;font-size:13px;">
+            Report Date: {report_date}
+        </p>
+    </div>
+    """
+
+    summary_box = build_summary_box(tp1, sm1, movers, vol)
+
+    html_body = f"""
     <html>
-    <body style="font-family:Arial; font-size:13px;">
-      <p><b>Subject:</b> NEPSE Smart Money & Trading Summary - {report_date}</p>
-      <p>Hi,</p>
-      <p>Please find below today’s NEPSE trading summary.</p>
+    <body style="font-family:Arial;font-size:13px;background:#ffffff;color:#222;padding:10px;">
 
-      {format_html_table(sm_1d, "Best Smart Money Stocks - 1 Day (Top 5)")}
-      {format_html_table(sm_7d, "Best Smart Money Stocks - 7 Day (Top 5)")}
-      {format_html_table(sm_15d, "Best Smart Money Stocks - 15 Day (Top 5)")}
+    {header_html}
 
-      {format_html_table(top_picks_1d, "Top Pick Stocks - 1 Day (Top 7)")}
-      {format_html_table(top_picks_7d, "Top Pick Stocks - Last 7 Days (Top 7)")}
+    <p>Please find today's NEPSE trading summary.</p>
 
-      {format_html_table(swing_7d, "Best Top 5 Swing Trading Stocks - 7 Day")}
-      {format_html_table(pm_7d, "Highest Movement Stocks - 7 Day (Top 7)")}
-      {format_html_table(volatile_7d, "Most Volatile Stocks - 7 Day (Top 7)")}
+    {summary_box}
 
-      <br>
-      <p>Regards,<br>Automated Trading Report Bot</p>
+    {format_html_table(tp1, "Today Top Pick Stocks (Top 5)")}
+    {format_html_table(tp7, "Top Pick Stocks - 7 Day")}
+    {format_html_table(sm1, "Best Smart Money Stocks - 1 Day")}
+    {format_html_table(sm7, "Best Smart Money Stocks - 7 Day")}
+    {format_html_table(sm15, "Best Smart Money Stocks - 15 Day")}
+    {format_html_table(swing, "Best Swing Trading Stocks - 7 Day")}
+    {format_html_table(movers, "Highest Movement Stocks - 7 Day")}
+    {format_html_table(vol, "Most Volatile Stocks - 7 Day")}
+
+    <br>
+    <p>Regards,<br><b>Trading Report Bot</b></p>
+
     </body>
     </html>
     """
-    return html, report_date
+
+    plain_text = f"""NEPSE Smart Money & Trading Summary
+Report Date: {report_date}
+
+Included Reports:
+1. Today Top Pick Stocks (Top 5)
+2. Top Pick Stocks - 7 Day
+3. Best Smart Money Stocks - 1 Day
+4. Best Smart Money Stocks - 7 Day
+5. Best Smart Money Stocks - 15 Day
+6. Best Swing Trading Stocks - 7 Day
+7. Highest Movement Stocks - 7 Day
+8. Most Volatile Stocks - 7 Day
+
+Regards,
+Trading Report Bot
+"""
+
+    return html_body, plain_text, report_date
 
 
-def send_email(subject, html_body):
+def send_email(subject, html_body, plain_text):
     email_user = os.environ["EMAIL_USER"]
     email_pass = os.environ["EMAIL_PASS"]
-    email_to = os.environ["EMAIL_TO"]
+    email_to_raw = os.environ["EMAIL_TO"]
+
+    recipients = [e.strip() for e in email_to_raw.split(",") if e.strip()]
+    if not recipients:
+        raise ValueError("EMAIL_TO is empty.")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = email_user
-    msg["To"] = email_to
-    msg.attach(MIMEText(html_body, "html"))
+    msg["To"] = ", ".join(recipients)
+
+    msg.attach(MIMEText(plain_text, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(email_user, email_pass)
-        server.sendmail(email_user, email_to, msg.as_string())
+        server.sendmail(email_user, recipients, msg.as_string())
 
     print("Email summary sent successfully.")
 
 
 def main():
     report_path = load_latest_report()
-    html_body, report_date = build_email_body(report_path)
+    html_body, plain_text, report_date = build_email_body(report_path)
     subject = f"NEPSE Smart Money & Trading Summary - {report_date}"
-    send_email(subject, html_body)
+    send_email(subject, html_body, plain_text)
 
 
 if __name__ == "__main__":
