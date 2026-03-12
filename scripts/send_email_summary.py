@@ -71,7 +71,11 @@ def build_email_body(report_path):
     smart_money = pd.read_excel(report_path, sheet_name="Smart_Money")
     price_movers = pd.read_excel(report_path, sheet_name="Price_Movers")
     symbol_summary = pd.read_excel(report_path, sheet_name="Symbol_Summary")
+    top_picks = pd.read_excel(report_path, sheet_name="Top_Picks")
 
+    # -----------------------------
+    # Best Smart Money Stocks
+    # -----------------------------
     sm_cols = [
         "Symbol",
         "Sectors",
@@ -124,54 +128,137 @@ def build_email_body(report_path):
     sm_7d = format_percent_cols(sm_7d, ["Momentum"])
     sm_15d = format_percent_cols(sm_15d, ["Momentum"])
 
+    # -----------------------------
+    # Top Pick Stocks - 1 Day (Top 7)
+    # Source: Top_Picks
+    # -----------------------------
+    top_picks_1d = (
+        top_picks[top_picks["Window"] == "1D"]
+        .sort_values("Total_Qty", ascending=False)
+        .head(7)
+        .copy()
+    )
+
+    top_picks_1d = top_picks_1d[
+        [c for c in ["Symbol", "Sectors", "Last_Price", "VWAP", "Total_Qty", "Trades"] if c in top_picks_1d.columns]
+    ]
+
+    top_picks_1d.rename(
+        columns={
+            "Sectors": "Sector",
+            "Last_Price": "Last Price",
+            "Total_Qty": "Quantity",
+        },
+        inplace=True,
+    )
+
+    top_picks_1d = safe_round(top_picks_1d, ["Last Price", "VWAP"])
+
+    # -----------------------------
+    # Top Pick Stocks - Last 7 Days (Top 7)
+    # Source: Top_Picks
+    # -----------------------------
+    top_picks_7d = (
+        top_picks[top_picks["Window"] == "7D"]
+        .sort_values("Total_Qty", ascending=False)
+        .head(7)
+        .copy()
+    )
+
+    top_picks_7d = top_picks_7d[
+        [c for c in ["Symbol", "Sectors", "Last_Price", "VWAP", "Total_Qty", "Trades"] if c in top_picks_7d.columns]
+    ]
+
+    top_picks_7d.rename(
+        columns={
+            "Sectors": "Sector",
+            "Last_Price": "Last Price",
+            "Total_Qty": "Quantity",
+        },
+        inplace=True,
+    )
+
+    top_picks_7d = safe_round(top_picks_7d, ["Last Price", "VWAP"])
+
+    # -----------------------------
+    # Best Top 5 Swing Trading Stocks - 7 Day
+    # Source: Symbol_Summary
+    # -----------------------------
+    swing_7d = (
+        symbol_summary[symbol_summary["Window"] == "7D"]
+        .sort_values("Score", ascending=False)
+        .head(5)
+        .copy()
+    )
+
+    swing_7d = swing_7d[
+        [c for c in ["Symbol", "Sectors", "Last_Price", "Momentum", "Range_%", "Vol_Surge", "Score", "Recommendation"] if c in swing_7d.columns]
+    ]
+
+    swing_7d.rename(
+        columns={
+            "Sectors": "Sector",
+            "Last_Price": "Last Price",
+            "Range_%": "Range %",
+            "Vol_Surge": "Volume Surge",
+        },
+        inplace=True,
+    )
+
+    swing_7d = safe_round(swing_7d, ["Last Price", "Range %", "Volume Surge", "Score"])
+    swing_7d = format_percent_cols(swing_7d, ["Momentum"])
+
+    # -----------------------------
+    # Highest Movement Stocks - 7 Day
+    # Source: Price_Movers
+    # -----------------------------
     pm_7d = (
         price_movers[price_movers["Window"] == "7D"]
         .sort_values("Change_%", ascending=False)
         .head(7)
         .copy()
     )
+
     pm_7d = pm_7d[
         [c for c in ["Symbol", "Sectors", "Close_start", "Close_end", "Change_%"] if c in pm_7d.columns]
     ]
-    pm_7d = pm_7d.rename(
+
+    pm_7d.rename(
         columns={
             "Sectors": "Sector",
             "Close_start": "Start Price",
             "Close_end": "Last Price",
             "Change_%": "Change %",
-        }
+        },
+        inplace=True,
     )
+
     pm_7d = safe_round(pm_7d, ["Start Price", "Last Price"])
     pm_7d = format_percent_cols(pm_7d, ["Change %"])
 
+    # -----------------------------
+    # Most Volatile Stocks - 7 Day
+    # Source: Symbol_Summary
+    # -----------------------------
     ss_7d = symbol_summary[symbol_summary["Window"] == "7D"].copy()
 
     volatile_7d = ss_7d.sort_values("Range_%", ascending=False).head(7).copy()
+
     volatile_7d = volatile_7d[
         [c for c in ["Symbol", "Sectors", "Last_Price", "Range_%", "Vol_Surge"] if c in volatile_7d.columns]
     ]
-    volatile_7d = volatile_7d.rename(
+
+    volatile_7d.rename(
         columns={
             "Sectors": "Sector",
             "Last_Price": "Last Price",
             "Range_%": "Range %",
             "Vol_Surge": "Volume Surge",
-        }
+        },
+        inplace=True,
     )
-    volatile_7d = safe_round(volatile_7d, ["Last Price", "Range %", "Volume Surge"])
 
-    gainers_7d = ss_7d.sort_values("Momentum", ascending=False).head(7).copy()
-    gainers_7d = gainers_7d[
-        [c for c in ["Symbol", "Sectors", "Last_Price", "Momentum", "Score", "Recommendation"] if c in gainers_7d.columns]
-    ]
-    gainers_7d = gainers_7d.rename(
-        columns={
-            "Sectors": "Sector",
-            "Last_Price": "Last Price",
-        }
-    )
-    gainers_7d = safe_round(gainers_7d, ["Last Price", "Score"])
-    gainers_7d = format_percent_cols(gainers_7d, ["Momentum"])
+    volatile_7d = safe_round(volatile_7d, ["Last Price", "Range %", "Volume Surge"])
 
     report_date = pd.Timestamp.now().strftime("%Y-%m-%d")
 
@@ -185,9 +272,13 @@ def build_email_body(report_path):
       {format_html_table(sm_1d, "Best Smart Money Stocks - 1 Day (Top 5)")}
       {format_html_table(sm_7d, "Best Smart Money Stocks - 7 Day (Top 5)")}
       {format_html_table(sm_15d, "Best Smart Money Stocks - 15 Day (Top 5)")}
+
+      {format_html_table(top_picks_1d, "Top Pick Stocks - 1 Day (Top 7)")}
+      {format_html_table(top_picks_7d, "Top Pick Stocks - Last 7 Days (Top 7)")}
+
+      {format_html_table(swing_7d, "Best Top 5 Swing Trading Stocks - 7 Day")}
       {format_html_table(pm_7d, "Highest Movement Stocks - 7 Day (Top 7)")}
       {format_html_table(volatile_7d, "Most Volatile Stocks - 7 Day (Top 7)")}
-      {format_html_table(gainers_7d, "Most Gainers Stocks - 7 Day (Top 7)")}
 
       <br>
       <p>Regards,<br>Automated Trading Report Bot</p>
