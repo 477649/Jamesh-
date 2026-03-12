@@ -62,7 +62,16 @@ jobs:
         run: |
           python priceaction_signals.py
 
-      # 5️⃣ Commit and push all daily outputs
+      # 5️⃣ Send email summary
+      - name: Send email summary
+        run: |
+          python scripts/send_email_summary.py
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+      # 6️⃣ Commit and push all daily outputs
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
