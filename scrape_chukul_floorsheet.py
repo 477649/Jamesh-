@@ -1,9 +1,15 @@
 import os
+import re
+import time
 from datetime import datetime, timezone, timedelta
-import pandas as pd
-from bs4 import BeautifulSoup
 
+import pandas as pd
 from selenium import webdriver
+from selenium.common.exceptions import (
+    TimeoutException,
+    StaleElementReferenceException,
+    ElementClickInterceptedException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -11,83 +17,46 @@ from selenium.webdriver.support import expected_conditions as EC
 
 URL = "https://chukul.com/floorsheet"
 
+TABLE_SELECTOR = (
+    "#q-app > div > div > div.q-page-container.mobile-padding > "
+    "div.q-pull-to-refresh > div.q-pull-to-refresh__content > div > div > div > "
+    "div.shadow-inner.full-width.q-px-xs > div > div > table"
+)
+
+EXPECTED_HEADER = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
+
 
 def parse_numeric(value):
+    """Convert values like '5.27 K' or '2.63 Lac.' into numbers."""
     if value is None:
         return None
-    s = str(value).strip()
+
+    s = str(value).strip().replace(",", "")
     if not s:
         return None
-    clean = "".join(c for c in s if c.isdigit() or c == ".")
-    try:
-        return float(clean) if clean else None
-    except ValueError:
+
+    match = re.search(r"(\d+(?:\.\d+)?)", s)
+    if not match:
         return None
 
+    num = float(match.group(1))
+    s_lower = s.lower()
 
-def scrape_current_page(driver):
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    table = soup.find("table")
-    if not table:
-        return []
+    if "lac" in s_lower:
+        return num * 100000
+    if "k" in s_lower:
+        return num * 1000
 
-    rows = table.find_all("tr")
-    data = []
-    for row in rows:
-        cols = row.find_all("td")
-        cols_data = [c.get_text(strip=True) for c in cols]
-        if cols_data:
-            data.append(cols_data)
-    return data
+    return num
 
 
-def first_row_key(driver):
-    try:
-        return driver.find_element(By.CSS_SELECTOR, "table tbody tr td").text.strip()
-    except Exception:
-        return None
-
-
-def go_to_next_page(driver, wait, current_page):
-    target = str(current_page + 1)
-
-    buttons = driver.find_elements(
-        By.XPATH,
-        f"//div[contains(@class,'q-pagination')]//button[normalize-space()='{target}']"
-    )
-
-    if not buttons:
-        return False
-
-    before = first_row_key(driver)
-    driver.execute_script("arguments[0].click();", buttons[0])
-
-    if before is not None:
-        wait.until(lambda d: first_row_key(d) != before)
-    else:
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table")))
-
-    return True
-
-
-def main():
-    # ✅ Repo root (IMPORTANT)
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-    # Nepal time
-    npt = timezone(timedelta(hours=5, minutes=45))
-    run_date = datetime.now(npt).strftime("%Y-%m-%d")
-
-    # ✅ EXACT location: outputs/Floor Sheet
-    out_dir = os.path.join(BASE_DIR, "outputs", "Floor Sheet")
-    os.makedirs(out_dir, exist_ok=True)
-
-    out_csv = os.path.join(out_dir, f"floorsheet_{run_date}.csv")
-
-    IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
+def build_driver():
+    is_github = os.getenv("GITHUB_ACTIONS") == "true"
 
     chrome_options = webdriver.ChromeOptions()
-    if IS_GITHUB:
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+
+    if is_github:
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
@@ -96,35 +65,175 @@ def main():
     else:
         chrome_options.add_argument("--start-maximized")
 
-    driver = webdriver.Chrome(options=chrome_options)
+    return webdriver.Chrome(options=chrome_options)
+
+
+def wait_for_table(driver, wait):
+    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, TABLE_SELECTOR)))
+    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, f"{TABLE_SELECTOR} tbody tr")))
+
+
+def get_page_marker(driver):
+    """
+    Use first row text as page-change marker.
+    JS-based to reduce stale element issues.
+    """
+    script = f"""
+    const table = document.querySelector({TABLE_SELECTOR!r});
+    if (!table) return null;
+
+    const firstRow = table.querySelector("tbody tr");
+    if (!firstRow) return null;
+
+    return firstRow.innerText.trim();
+    """
+    try:
+        return driver.execute_script(script)
+    except Exception:
+        return None
+
+
+def scrape_current_page(driver, max_retries=5):
+    """
+    Fast page scrape using JavaScript.
+    Avoids slow td-by-td Selenium reads.
+    """
+    script = f"""
+    const table = document.querySelector({TABLE_SELECTOR!r});
+    if (!table) return [];
+
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    return rows.map(row =>
+        Array.from(row.querySelectorAll("td")).map(td => td.innerText.trim())
+    );
+    """
+
+    for _ in range(max_retries):
+        try:
+            data = driver.execute_script(script)
+            data = [row for row in data if row and len(row) == len(EXPECTED_HEADER)]
+            if data:
+                return data
+        except Exception:
+            pass
+
+        time.sleep(0.8)
+
+    return []
+
+
+def find_next_button(driver):
+    """
+    Find the real clickable Next button.
+    """
+    xpath_candidates = [
+        "//i[normalize-space()='keyboard_arrow_right']/ancestor::button[1]",
+        "//*[@aria-label='Next page']",
+    ]
+
+    for xp in xpath_candidates:
+        elements = driver.find_elements(By.XPATH, xp)
+        if elements:
+            return elements[0]
+
+    return None
+
+
+def click_next_page(driver, wait, max_retries=3):
+    """
+    Click the Next page button and wait for table content to change.
+    Returns False when no more pages are available.
+    """
+    for _ in range(max_retries):
+        next_btn = find_next_button(driver)
+        if not next_btn:
+            print("Next button not found.")
+            return False
+
+        try:
+            disabled = next_btn.get_attribute("disabled")
+            aria_disabled = next_btn.get_attribute("aria-disabled")
+            classes = (next_btn.get_attribute("class") or "").lower()
+
+            if disabled is not None or aria_disabled == "true" or "disabled" in classes:
+                print("Next button is disabled. Reached last page.")
+                return False
+
+            before = get_page_marker(driver)
+
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_btn)
+            time.sleep(0.3)
+
+            try:
+                driver.execute_script("arguments[0].click();", next_btn)
+            except Exception:
+                next_btn.click()
+
+            wait.until(lambda d: get_page_marker(d) not in (None, before))
+            time.sleep(1.2)
+            return True
+
+        except (TimeoutException, StaleElementReferenceException, ElementClickInterceptedException):
+            time.sleep(1)
+
+    print("Failed to move to next page after retries.")
+    return False
+
+
+def main():
+    # Repo root
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Nepal time
+    npt = timezone(timedelta(hours=5, minutes=45))
+    run_date = datetime.now(npt).strftime("%Y-%m-%d")
+
+    # Output path
+    out_dir = os.path.join(base_dir, "outputs", "Floor Sheet")
+    os.makedirs(out_dir, exist_ok=True)
+
+    out_csv = os.path.join(out_dir, f"floorsheet_{run_date}.csv")
+
+    driver = build_driver()
     wait = WebDriverWait(driver, 30)
 
     try:
+        print("Opening website...")
         driver.get(URL)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table")))
+
+        wait_for_table(driver, wait)
+        time.sleep(2)
 
         all_data = []
-        current_page = 1
+        page_no = 1
 
         while True:
-            all_data.extend(scrape_current_page(driver))
-            print(f"Scraped page: {current_page}")
+            page_data = scrape_current_page(driver)
 
-            if not go_to_next_page(driver, wait, current_page):
+            if not page_data:
+                print(f"No rows found on page {page_no}. Stopping.")
                 break
 
-            current_page += 1
+            all_data.extend(page_data)
+            print(f"Scraped page {page_no} | rows: {len(page_data)} | total rows: {len(all_data)}")
 
-        df = pd.DataFrame(all_data)
-        header = ["TRANSACTION", "SYMBOL", "BUYER", "SELLER", "QUANTITY", "RATE", "AMOUNT"]
+            moved = click_next_page(driver, wait)
+            if not moved:
+                print("No more pages found.")
+                break
 
-        if df.shape[1] != len(header):
-            raise ValueError("Column mismatch")
+            page_no += 1
 
-        df.columns = header
+        if not all_data:
+            raise ValueError("No data scraped from the website.")
+
+        df = pd.DataFrame(all_data, columns=EXPECTED_HEADER)
+
         df["Quantity"] = df["Quantity"].apply(parse_numeric)
         df["Rate"] = df["Rate"].apply(parse_numeric)
-        df["Amount"] = df["Amount"].apply(parse_numeric)
+
+        # Recalculate Amount from Quantity * Rate
+        df["Amount"] = df["Quantity"] * df["Rate"]
 
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")
         print(f"Saved successfully: {out_csv}")
