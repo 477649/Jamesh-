@@ -11,8 +11,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 URL = "https://chukul.com/floorsheet"
 
-HEADER = ["Transaction", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
-
 
 def parse_numeric(value):
     if value is None:
@@ -33,26 +31,13 @@ def scrape_current_page(driver):
     if not table:
         return []
 
+    rows = table.find_all("tr")
     data = []
-
-    tbody = table.find("tbody")
-    if not tbody:
-        return []
-
-    rows = tbody.find_all("tr")
     for row in rows:
         cols = row.find_all("td")
         cols_data = [c.get_text(strip=True) for c in cols]
-
-        if not cols_data:
-            continue
-
-        if len(cols_data) != len(HEADER):
-            print(f"Skipping row with {len(cols_data)} columns: {cols_data}")
-            continue
-
-        data.append(cols_data)
-
+        if cols_data:
+            data.append(cols_data)
     return data
 
 
@@ -80,17 +65,20 @@ def go_to_next_page(driver, wait, current_page):
     if before is not None:
         wait.until(lambda d: first_row_key(d) != before)
     else:
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table")))
 
     return True
 
 
 def main():
+    # ✅ Repo root (IMPORTANT)
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+    # Nepal time
     npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
+    # ✅ EXACT location: outputs/Floor Sheet
     out_dir = os.path.join(BASE_DIR, "outputs", "Floor Sheet")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -113,26 +101,27 @@ def main():
 
     try:
         driver.get(URL)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table")))
 
         all_data = []
         current_page = 1
 
         while True:
-            page_data = scrape_current_page(driver)
-            all_data.extend(page_data)
-            print(f"Scraped page: {current_page}, rows: {len(page_data)}")
+            all_data.extend(scrape_current_page(driver))
+            print(f"Scraped page: {current_page}")
 
             if not go_to_next_page(driver, wait, current_page):
                 break
 
             current_page += 1
 
-        if not all_data:
-            raise ValueError("No data scraped")
+        df = pd.DataFrame(all_data)
+        header = ["TRANSACTION", "SYMBOL", "BUYER", "SELLER", "QUANTITY", "RATE", "AMOUNT"]
 
-        df = pd.DataFrame(all_data, columns=HEADER)
+        if df.shape[1] != len(header):
+            raise ValueError("Column mismatch")
 
+        df.columns = header
         df["Quantity"] = df["Quantity"].apply(parse_numeric)
         df["Rate"] = df["Rate"].apply(parse_numeric)
         df["Amount"] = df["Amount"].apply(parse_numeric)
