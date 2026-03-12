@@ -116,7 +116,7 @@ def main():
             current_page += 1
 
         df = pd.DataFrame(all_data)
-        header = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
+        header = ["TRANSACTION", "SYMBOL", "BUYER", "SELLER", "QUANTITY", "RATE", "AMOUNT"]
 
         if df.shape[1] != len(header):
             raise ValueError("Column mismatch")
