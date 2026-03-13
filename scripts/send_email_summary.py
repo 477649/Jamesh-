@@ -364,7 +364,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     sm7 = prepare_table(
@@ -375,7 +375,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     sm15 = prepare_table(
@@ -386,7 +386,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     top_picks_map = [
@@ -406,7 +406,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     tp7 = prepare_table(
@@ -415,7 +415,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     swing_map = [
@@ -438,7 +438,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="score",
         ascending=False,
-        limit=5,
+        limit=7,
     )
 
     movers_map = [
