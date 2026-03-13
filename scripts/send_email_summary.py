@@ -31,11 +31,15 @@ def safe_round(df, cols, digits=2):
     return df
 
 
-def format_percent_cols(df, cols):
+def format_percent_cols(df, cols, scale_100_cols=None):
     df = df.copy()
+    scale_100_cols = set(scale_100_cols or [])
+
     for col in cols:
         if col in df.columns:
             series = pd.to_numeric(df[col], errors="coerce")
+            if col in scale_100_cols:
+                series = series * 100
             df[col] = series.map(lambda x: f"{x:.2f}%" if pd.notna(x) else "")
     return df
 
@@ -58,6 +62,9 @@ def normalize_columns(df):
 
     alias_map = {
         "window": "window",
+        "from": "from_date",
+        "to": "to_date",
+        "list": "list",
         "symbol": "symbol",
         "company": "company",
         "sectors": "sector",
@@ -80,10 +87,34 @@ def normalize_columns(df):
         "qty": "quantity",
         "trades": "trades",
         "score": "score",
+        "setupscore": "setup_score",
+        "setup_score": "setup_score",
+        "setup_tag": "setup_tag",
         "recommendation": "recommendation",
         "close_start": "start_price",
         "close_end": "last_price",
         "change_pct": "change_pct",
+        "buy_pressure": "buy_pressure",
+        "sell_pressure": "sell_pressure",
+        "risk_flags": "risk_flags",
+        "close_pos": "close_pos",
+        "smartbrokerscore": "smart_broker_score",
+        "institutionscore": "institution_score",
+        "operatorscore": "operator_score",
+        "amount_cr": "amount_cr",
+        "avg_score": "avg_score",
+        "avg_momentum": "avg_momentum",
+        "avg_vol_surge": "avg_vol_surge",
+        "buy_count": "buy_count",
+        "hold_count": "hold_count",
+        "sell_count": "sell_count",
+        "median_score": "median_score",
+        "avg_vol_surge": "avg_vol_surge",
+        "top_sector": "top_sector",
+        "broker": "broker",
+        "brokername": "broker_name",
+        "brokertype": "broker_type",
+        "tag": "tag",
     }
 
     rename_map = {}
@@ -95,22 +126,67 @@ def normalize_columns(df):
     return df
 
 
+def get_report_date(report_path):
+    try:
+        overview = pd.read_excel(report_path, sheet_name="Market_Overview")
+        overview = normalize_columns(overview)
+
+        if "window" in overview.columns and "to_date" in overview.columns:
+            one_day = overview[overview["window"].astype(str).str.upper() == "1D"]
+            if not one_day.empty:
+                val = one_day.iloc[0]["to_date"]
+                return pd.to_datetime(val).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
+    return pd.Timestamp.now().strftime("%Y-%m-%d")
+
+
+def filter_window(df, window_value):
+    if "window" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["window"].astype(str).str.strip().str.upper() == window_value.upper()].copy()
+
+
+def filter_list(df, list_value):
+    if "list" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["list"].astype(str).str.strip().str.upper() == list_value.upper()].copy()
+
+
 def get_cell_style(column, value):
     text = "" if pd.isna(value) else str(value).strip().lower()
 
-    if column in ["Signal", "Recommendation"]:
-        if any(word in text for word in ["bull", "buy", "strong", "positive"]):
+    if column in ["Signal", "Recommendation", "Setup Tag", "Tag"]:
+        if any(word in text for word in ["bull", "buy", "strong", "positive", "accumulation", "early"]):
             return "background-color:#e8f5e9; color:#1b5e20; font-weight:bold;"
-        if any(word in text for word in ["bear", "sell", "weak", "negative"]):
+        if any(word in text for word in ["bear", "sell", "weak", "negative", "avoid", "caution", "distribution"]):
             return "background-color:#ffebee; color:#b71c1c; font-weight:bold;"
+        if any(word in text for word in ["hold", "watch", "neutral"]):
+            return "background-color:#fff8e1; color:#8d6e63; font-weight:bold;"
 
-    if column in ["Momentum", "Change %", "Range %", "Price vs VWAP %"]:
+    if column in [
+        "Momentum",
+        "Change %",
+        "Range %",
+        "Price vs VWAP %",
+        "Avg Momentum",
+        "Avg Vol Surge",
+    ]:
         try:
             num = float(str(value).replace("%", "").replace(",", "").strip())
             if num > 0:
                 return "color:#1b5e20; font-weight:bold;"
             if num < 0:
                 return "color:#b71c1c; font-weight:bold;"
+        except Exception:
+            pass
+
+    if column in ["Operator Score"] and value not in ("", None):
+        try:
+            num = float(value)
+            if num >= 75:
+                return "background-color:#ffebee; color:#b71c1c; font-weight:bold;"
         except Exception:
             pass
 
@@ -146,37 +222,16 @@ def format_html_table(df, title):
     return "".join(parts)
 
 
-def build_summary_box(top_pick_df, sm1_df, movers_df, vol_df):
-    top_pick = top_pick_df.iloc[0]["Symbol"] if not top_pick_df.empty else "-"
-    smart_money = sm1_df.iloc[0]["Symbol"] if not sm1_df.empty else "-"
-    highest_mover = movers_df.iloc[0]["Symbol"] if not movers_df.empty else "-"
-    most_volatile = vol_df.iloc[0]["Symbol"] if not vol_df.empty else "-"
-
-    return f"""
-    <div style="
-        border:1px solid #cfd8dc;
-        background:#f8fbfd;
-        padding:12px 14px;
-        margin-bottom:18px;
-        font-family:Arial;
-        font-size:13px;
-        border-radius:6px;">
-      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Snapshot</h3>
-      <p style="margin:4px 0;"><b>Top Pick Today:</b> {html.escape(str(top_pick))}</p>
-      <p style="margin:4px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
-      <p style="margin:4px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
-      <p style="margin:4px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
-    </div>
-    """
-
-
-def filter_window(df, window_value):
-    if "window" not in df.columns:
-        return df.iloc[0:0].copy()
-    return df[df["window"].astype(str).str.strip().str.upper() == window_value.upper()].copy()
-
-
-def prepare_table(df, columns_map, round_cols=None, percent_cols=None, sort_by=None, ascending=False, limit=None):
+def prepare_table(
+    df,
+    columns_map,
+    round_cols=None,
+    percent_cols=None,
+    scale_100_cols=None,
+    sort_by=None,
+    ascending=False,
+    limit=None,
+):
     out = df.copy()
 
     if sort_by and sort_by in out.columns:
@@ -193,18 +248,102 @@ def prepare_table(df, columns_map, round_cols=None, percent_cols=None, sort_by=N
         result = safe_round(result, round_cols)
 
     if percent_cols:
-        result = format_percent_cols(result, percent_cols)
+        result = format_percent_cols(result, percent_cols, scale_100_cols=scale_100_cols)
 
     return result
 
 
+def build_summary_box(tp1_df, sm1_df, movers_df, vol_df, setup_df):
+    top_pick = tp1_df.iloc[0]["Symbol"] if not tp1_df.empty else "-"
+    smart_money = sm1_df.iloc[0]["Symbol"] if not sm1_df.empty else "-"
+    highest_mover = movers_df.iloc[0]["Symbol"] if not movers_df.empty else "-"
+    most_volatile = vol_df.iloc[0]["Symbol"] if not vol_df.empty else "-"
+    best_setup = setup_df.iloc[0]["Symbol"] if not setup_df.empty else "-"
+
+    return f"""
+    <div style="
+        border:1px solid #cfd8dc;
+        background:#f8fbfd;
+        padding:12px 14px;
+        margin-bottom:18px;
+        font-family:Arial;
+        font-size:13px;
+        border-radius:6px;">
+      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Snapshot</h3>
+      <p style="margin:4px 0;"><b>Top Pick Today:</b> {html.escape(str(top_pick))}</p>
+      <p style="margin:4px 0;"><b>Best Trade Setup:</b> {html.escape(str(best_setup))}</p>
+      <p style="margin:4px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
+      <p style="margin:4px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
+      <p style="margin:4px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
+    </div>
+    """
+
+
+def build_market_direction_box(market_overview, symbol_summary):
+    box_style = """
+        border:1px solid #cfd8dc;
+        background:#f8fbfd;
+        padding:12px 14px;
+        margin-bottom:18px;
+        font-family:Arial;
+        font-size:13px;
+        border-radius:6px;
+    """
+
+    ov7 = filter_window(market_overview, "7D")
+    if not ov7.empty:
+        row = ov7.iloc[0]
+        buy_count = int(pd.to_numeric(row.get("buy_count", 0), errors="coerce") or 0)
+        hold_count = int(pd.to_numeric(row.get("hold_count", 0), errors="coerce") or 0)
+        sell_count = int(pd.to_numeric(row.get("sell_count", 0), errors="coerce") or 0)
+        median_score = pd.to_numeric(row.get("median_score", None), errors="coerce")
+        avg_vol_surge = pd.to_numeric(row.get("avg_vol_surge", None), errors="coerce")
+    else:
+        ss7 = filter_window(symbol_summary, "7D")
+        buy_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "BUY").sum())
+        hold_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "HOLD").sum())
+        sell_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "SELL / AVOID").sum())
+        median_score = pd.to_numeric(ss7.get("score", pd.Series(dtype=float)), errors="coerce").median()
+        avg_vol_surge = pd.to_numeric(ss7.get("vol_surge", pd.Series(dtype=float)), errors="coerce").mean()
+
+    if buy_count > sell_count and buy_count >= hold_count:
+        bias = "Bullish"
+        bias_color = "#1b5e20"
+    elif sell_count > buy_count:
+        bias = "Bearish"
+        bias_color = "#b71c1c"
+    else:
+        bias = "Neutral"
+        bias_color = "#8d6e63"
+
+    median_score_txt = f"{median_score:.2f}" if pd.notna(median_score) else "-"
+    avg_vol_surge_txt = f"{avg_vol_surge:.2f}" if pd.notna(avg_vol_surge) else "-"
+
+    return f"""
+    <div style="{box_style}">
+      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Direction (7D)</h3>
+      <p style="margin:4px 0;"><b>Bullish Stocks:</b> {buy_count}</p>
+      <p style="margin:4px 0;"><b>Neutral Stocks:</b> {hold_count}</p>
+      <p style="margin:4px 0;"><b>Bearish Stocks:</b> {sell_count}</p>
+      <p style="margin:4px 0;"><b>Median Score:</b> {median_score_txt}</p>
+      <p style="margin:4px 0;"><b>Average Volume Surge:</b> {avg_vol_surge_txt}</p>
+      <p style="margin:6px 0 0 0;"><b>Market Bias:</b> <span style="color:{bias_color};font-weight:bold;">{bias}</span></p>
+    </div>
+    """
+
+
 def build_email_body(report_path):
+    market_overview = normalize_columns(pd.read_excel(report_path, sheet_name="Market_Overview"))
     smart_money = normalize_columns(pd.read_excel(report_path, sheet_name="Smart_Money"))
     price_movers = normalize_columns(pd.read_excel(report_path, sheet_name="Price_Movers"))
     symbol_summary = normalize_columns(pd.read_excel(report_path, sheet_name="Symbol_Summary"))
     top_picks = normalize_columns(pd.read_excel(report_path, sheet_name="Top_Picks"))
+    trade_setups = normalize_columns(pd.read_excel(report_path, sheet_name="Trade_Setups"))
+    sector_summary = normalize_columns(pd.read_excel(report_path, sheet_name="Sector_Summary"))
+    operator_radar = normalize_columns(pd.read_excel(report_path, sheet_name="Operator_Radar"))
 
-    # Smart Money
+    report_date = get_report_date(report_path)
+
     smart_money_map = [
         ("symbol", "Symbol"),
         ("sector", "Sector"),
@@ -213,7 +352,6 @@ def build_email_body(report_path):
         ("momentum", "Momentum"),
         ("range_pct", "Range %"),
         ("vol_surge", "Volume Surge"),
-        ("price_vs_vwap_pct", "Price vs VWAP %"),
         ("smart_money_score", "Smart Money Score"),
         ("signal", "Signal"),
     ]
@@ -221,8 +359,9 @@ def build_email_body(report_path):
     sm1 = prepare_table(
         filter_window(smart_money, "1D"),
         smart_money_map,
-        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
-        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %"],
+        scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
         limit=5,
@@ -231,8 +370,9 @@ def build_email_body(report_path):
     sm7 = prepare_table(
         filter_window(smart_money, "7D"),
         smart_money_map,
-        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
-        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %"],
+        scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
         limit=5,
@@ -241,42 +381,43 @@ def build_email_body(report_path):
     sm15 = prepare_table(
         filter_window(smart_money, "15D"),
         smart_money_map,
-        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Price vs VWAP %", "Smart Money Score"],
-        percent_cols=["Momentum", "Range %", "Price vs VWAP %"],
+        round_cols=["Last Price", "VWAP", "Range %", "Volume Surge", "Smart Money Score"],
+        percent_cols=["Momentum", "Range %"],
+        scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
         limit=5,
     )
 
-    # Top Picks
     top_picks_map = [
         ("symbol", "Symbol"),
         ("sector", "Sector"),
         ("last_price", "Last Price"),
         ("vwap", "VWAP"),
+        ("score", "Score"),
         ("quantity", "Quantity"),
         ("trades", "Trades"),
+        ("recommendation", "Recommendation"),
     ]
 
     tp1 = prepare_table(
-        filter_window(top_picks, "1D"),
+        filter_list(filter_window(top_picks, "1D"), "TOP_BUY"),
         top_picks_map,
-        round_cols=["Last Price", "VWAP"],
-        sort_by="quantity",
+        round_cols=["Last Price", "VWAP", "Score"],
+        sort_by="score",
         ascending=False,
         limit=5,
     )
 
     tp7 = prepare_table(
-        filter_window(top_picks, "7D"),
+        filter_list(filter_window(top_picks, "7D"), "TOP_BUY"),
         top_picks_map,
-        round_cols=["Last Price", "VWAP"],
-        sort_by="quantity",
+        round_cols=["Last Price", "VWAP", "Score"],
+        sort_by="score",
         ascending=False,
         limit=5,
     )
 
-    # Swing Trading
     swing_map = [
         ("symbol", "Symbol"),
         ("sector", "Sector"),
@@ -286,6 +427,7 @@ def build_email_body(report_path):
         ("vol_surge", "Volume Surge"),
         ("score", "Score"),
         ("recommendation", "Recommendation"),
+        ("risk_flags", "Risk Flags"),
     ]
 
     swing = prepare_table(
@@ -293,12 +435,12 @@ def build_email_body(report_path):
         swing_map,
         round_cols=["Last Price", "Range %", "Volume Surge", "Score"],
         percent_cols=["Momentum"],
+        scale_100_cols=["Momentum"],
         sort_by="score",
         ascending=False,
         limit=5,
     )
 
-    # Highest Movement
     movers_map = [
         ("symbol", "Symbol"),
         ("sector", "Sector"),
@@ -317,7 +459,6 @@ def build_email_body(report_path):
         limit=7,
     )
 
-    # Most Volatile
     vol_map = [
         ("symbol", "Symbol"),
         ("sector", "Sector"),
@@ -336,7 +477,68 @@ def build_email_body(report_path):
         limit=7,
     )
 
-    report_date = pd.Timestamp.now().strftime("%Y-%m-%d")
+    setup_map = [
+        ("symbol", "Symbol"),
+        ("sector", "Sector"),
+        ("setup_score", "Setup Score"),
+        ("setup_tag", "Setup Tag"),
+        ("score", "Score"),
+        ("smart_money_score", "Smart Money Score"),
+        ("vol_surge", "Volume Surge"),
+        ("momentum", "Momentum"),
+    ]
+
+    setups = prepare_table(
+        filter_window(trade_setups, "7D"),
+        setup_map,
+        round_cols=["Setup Score", "Score", "Smart Money Score", "Volume Surge"],
+        percent_cols=["Momentum"],
+        scale_100_cols=["Momentum"],
+        sort_by="setup_score",
+        ascending=False,
+        limit=7,
+    )
+
+    sector_map = [
+        ("sector", "Sector"),
+        ("symbols", "Symbols"),
+        ("amount_cr", "Amount Cr"),
+        ("avg_score", "Avg Score"),
+        ("avg_momentum", "Avg Momentum"),
+        ("avg_vol_surge", "Avg Vol Surge"),
+    ]
+
+    sectors = prepare_table(
+        filter_window(sector_summary, "7D"),
+        sector_map,
+        round_cols=["Amount Cr", "Avg Score", "Avg Vol Surge"],
+        percent_cols=["Avg Momentum"],
+        scale_100_cols=["Avg Momentum"],
+        sort_by="avg_score",
+        ascending=False,
+        limit=7,
+    )
+
+    operator_map = [
+        ("symbol", "Symbol"),
+        ("broker", "Broker"),
+        ("broker_name", "Broker Name"),
+        ("broker_type", "Broker Type"),
+        ("operator_score", "Operator Score"),
+        ("concentration_pct", "Concentration %"),
+        ("flip_ratio", "Flip Ratio"),
+        ("tag", "Tag"),
+    ]
+
+    operator_warn = prepare_table(
+        filter_window(operator_radar, "7D"),
+        operator_map,
+        round_cols=["Operator Score", "Concentration %", "Flip Ratio"],
+        percent_cols=["Concentration %"],
+        sort_by="operator_score",
+        ascending=False,
+        limit=10,
+    )
 
     header_html = f"""
     <div style="
@@ -347,12 +549,13 @@ def build_email_body(report_path):
         margin-bottom:18px;">
         <h2 style="margin:0;font-family:Arial;">NEPSE Smart Money & Trading Summary</h2>
         <p style="margin:6px 0 0 0;font-family:Arial;font-size:13px;">
-            Report Date: {report_date}
+            Report Date: {html.escape(report_date)}
         </p>
     </div>
     """
 
-    summary_box = build_summary_box(tp1, sm1, movers, vol)
+    summary_box = build_summary_box(tp1, sm1, movers, vol, setups)
+    market_direction_box = build_market_direction_box(market_overview, symbol_summary)
 
     html_body = f"""
     <html>
@@ -360,18 +563,22 @@ def build_email_body(report_path):
 
     {header_html}
 
-    <p>Please find today's NEPSE trading summary.</p>
+    <p>Please find today's NEPSE trading summary generated from the latest Retail-Pro Excel report.</p>
 
     {summary_box}
+    {market_direction_box}
 
-    {format_html_table(tp1, "Today Top Pick Stocks (Top 5)")}
-    {format_html_table(tp7, "Top Pick Stocks - 7 Day")}
-    {format_html_table(sm1, "Best Smart Money Stocks - 1 Day")}
-    {format_html_table(sm7, "Best Smart Money Stocks - 7 Day")}
-    {format_html_table(sm15, "Best Smart Money Stocks - 15 Day")}
-    {format_html_table(swing, "Best Swing Trading Stocks - 7 Day")}
-    {format_html_table(movers, "Highest Movement Stocks - 7 Day")}
-    {format_html_table(vol, "Most Volatile Stocks - 7 Day")}
+    {format_html_table(tp1, "Today Top Buy Picks (1D)")}
+    {format_html_table(tp7, "Top Buy Picks (7D)")}
+    {format_html_table(sm1, "Best Smart Money Stocks (1D)")}
+    {format_html_table(sm7, "Best Smart Money Stocks (7D)")}
+    {format_html_table(sm15, "Best Smart Money Stocks (15D)")}
+    {format_html_table(swing, "Best Swing Trading Stocks (7D)")}
+    {format_html_table(setups, "Best Trade Setups (7D)")}
+    {format_html_table(movers, "Highest Movement Stocks (7D)")}
+    {format_html_table(vol, "Most Volatile Stocks (7D)")}
+    {format_html_table(sectors, "Top Performing Sectors (7D)")}
+    {format_html_table(operator_warn, "Operator Activity Warning (7D)")}
 
     <br>
     <p>Regards,<br><b>Trading Report Bot</b></p>
@@ -384,14 +591,19 @@ def build_email_body(report_path):
 Report Date: {report_date}
 
 Included Reports:
-1. Today Top Pick Stocks (Top 5)
-2. Top Pick Stocks - 7 Day
-3. Best Smart Money Stocks - 1 Day
-4. Best Smart Money Stocks - 7 Day
-5. Best Smart Money Stocks - 15 Day
-6. Best Swing Trading Stocks - 7 Day
-7. Highest Movement Stocks - 7 Day
-8. Most Volatile Stocks - 7 Day
+1. Market Snapshot
+2. Market Direction (7D)
+3. Today Top Buy Picks (1D)
+4. Top Buy Picks (7D)
+5. Best Smart Money Stocks (1D)
+6. Best Smart Money Stocks (7D)
+7. Best Smart Money Stocks (15D)
+8. Best Swing Trading Stocks (7D)
+9. Best Trade Setups (7D)
+10. Highest Movement Stocks (7D)
+11. Most Volatile Stocks (7D)
+12. Top Performing Sectors (7D)
+13. Operator Activity Warning (7D)
 
 Regards,
 Trading Report Bot
