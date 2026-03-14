@@ -57,6 +57,7 @@ REPORT_DIR = ROOT / "outputs" / "reports"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 WINDOWS = {"1D": 1, "7D": 7, "15D": 15, "1M": 30}
+BROKER_BY_SYMBOL_EXTRA_WINDOWS = {"3M": 90}
 
 FLOOR_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 PRICE_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
@@ -1257,6 +1258,54 @@ def main():
                     sx[c] = pd.to_numeric(sx[c], errors="coerce").round(2)
             sx = sx.sort_values(["SetupScore"], ascending=False).head(60).copy()
             setups_all.append(sx)
+
+    # Extra window only for Broker_by_Symbol sheet: 3M
+    for wname, n in BROKER_BY_SYMBOL_EXTRA_WINDOWS.items():
+        w_dates = choose_window_dates(trading_dates, n)
+        if not w_dates:
+            continue
+        topn = window_topn(wname)
+
+        fs_list = []
+        for d in w_dates:
+            fp = floor_map.get(d)
+            if fp is None:
+                continue
+            fs_list.append(read_floorsheet_file(fp, d))
+        fs = pd.concat(fs_list, ignore_index=True) if fs_list else pd.DataFrame()
+
+        bs_daily = broker_symbol_metrics(fs) if not fs.empty else pd.DataFrame(
+            columns=["TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Avg_Buy_Cost", "Buy_Amount_Cr"]
+        )
+
+        if not bs_daily.empty:
+            bs_window = bs_daily.groupby(["Symbol", "Broker"], as_index=False).agg(
+                Buy_Qty=("Buy_Qty", "sum"),
+                Sell_Qty=("Sell_Qty", "sum"),
+                Net_Qty=("Net_Qty", "sum"),
+                Avg_Buy_Cost=("Avg_Buy_Cost", "mean"),
+                Buy_Amount_Cr=("Buy_Amount_Cr", "sum"),
+                Active_Days=("Net_Qty", lambda s: int((s > 0).sum())),
+            )
+
+            tb = top_net_brokers(bs_window, topn=topn)
+            tb = tb.merge(brokers_master, on="Broker", how="left")
+            tb["BrokerName"] = tb["BrokerName"].fillna("")
+            tb["BrokerType"] = tb["BrokerType"].fillna("UNKNOWN")
+
+            # ✅ Only for Broker_by_Symbol sheet: add Sector after Symbol
+            tb = tb.merge(sector[["Symbol", "Sectors"]], on="Symbol", how="left")
+            tb = tb.rename(columns={"Sectors": "Sector"})
+
+            # put Sector right after Symbol
+            cols = list(tb.columns)
+            if "Symbol" in cols and "Sector" in cols:
+                cols.remove("Symbol")
+                cols.remove("Sector")
+                tb = tb[["Symbol", "Sector"] + cols]
+
+            tb.insert(0, "Window", wname)
+            broker_by_symbol_all.append(tb)
 
     # Combine sheets
     symbol_summary = pd.concat(symbol_summary_all, ignore_index=True) if symbol_summary_all else pd.DataFrame()
