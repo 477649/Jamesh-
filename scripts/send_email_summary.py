@@ -364,7 +364,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     sm7 = prepare_table(
@@ -375,7 +375,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     sm15 = prepare_table(
@@ -386,7 +386,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     top_picks_map = [
@@ -406,7 +406,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     tp7 = prepare_table(
@@ -415,7 +415,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     swing_map = [
@@ -438,7 +438,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     movers_map = [
@@ -456,7 +456,7 @@ def build_email_body(report_path):
         percent_cols=["Change %"],
         sort_by="change_pct",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     vol_map = [
@@ -474,7 +474,7 @@ def build_email_body(report_path):
         percent_cols=["Range %"],
         sort_by="range_pct",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     setup_map = [
@@ -496,7 +496,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="setup_score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     sector_map = [
@@ -516,7 +516,7 @@ def build_email_body(report_path):
         scale_100_cols=["Avg Momentum"],
         sort_by="avg_score",
         ascending=False,
-        limit=7,
+        limit=10,
     )
 
     operator_map = [
