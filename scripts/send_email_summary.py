@@ -404,7 +404,7 @@ def build_email_body(report_path):
         filter_list(filter_window(top_picks, "1D"), "TOP_BUY"),
         top_picks_map,
         round_cols=["Last Price", "VWAP", "Score"],
-        sort_by="score",
+        sort_by="quantity",
         ascending=False,
         limit=10,
     )
@@ -413,7 +413,7 @@ def build_email_body(report_path):
         filter_list(filter_window(top_picks, "7D"), "TOP_BUY"),
         top_picks_map,
         round_cols=["Last Price", "VWAP", "Score"],
-        sort_by="score",
+        sort_by="quantity",
         ascending=False,
         limit=10,
     )
