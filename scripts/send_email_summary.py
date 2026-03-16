@@ -731,13 +731,13 @@ def build_email_body(report_path):
     ]
 
     operator_warn = prepare_table(
-        filter_window(operator_radar, "15D"),
+        filter_window(operator_radar, "7D"),
         operator_map,
         round_cols=["Operator Score", "Concentration %", "Flip Ratio"],
         percent_cols=["Concentration %"],
         sort_by="operator_score",
         ascending=False,
-        limit=15,
+        limit=10,
     )
 
     header_html = f"""
@@ -783,7 +783,7 @@ def build_email_body(report_path):
 
     {header_html}
 
-    <p style="font-size:14px;color:#37474f;">Please find today's NEPSE trading summary.</p>
+    <p style="font-size:14px;color:#37474f;">Please find today's NEPSE trading summary report.</p>
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:18px;">
       <tr>
@@ -812,7 +812,7 @@ def build_email_body(report_path):
     {format_html_table(movers7, "Highest Movement Stocks (7D)")}
     {format_html_table(vol7, "Most Volatile Stocks (7D)")}
     {format_html_table(sectors, "Top Performing Sectors (7D)")}
-    {format_html_table(operator_warn, "Operator Activity Warning (15D)")}
+    {format_html_table(operator_warn, "Operator Activity Warning (7D)")}
 
     <br>
     <p>Regards,<br><b>Trading Report Bot</b></p>
@@ -841,7 +841,7 @@ Included Reports:
 14. Highest Movement Stocks (7D)
 15. Most Volatile Stocks (7D)
 16. Top Performing Sectors (7D)
-17. Operator Activity Warning (15D)
+17. Operator Activity Warning (7D)
 
 Regards,
 Trading Report Bot
