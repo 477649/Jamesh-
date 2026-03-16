@@ -109,7 +109,6 @@ def normalize_columns(df):
         "hold_count": "hold_count",
         "sell_count": "sell_count",
         "median_score": "median_score",
-        "avg_vol_surge": "avg_vol_surge",
         "top_sector": "top_sector",
         "broker": "broker",
         "brokername": "broker_name",
@@ -253,9 +252,9 @@ def prepare_table(
     return result
 
 
-def build_summary_box(tp1_df, sm1_df, movers_df, vol_df, setup_df):
-    top_pick = tp1_df.iloc[0]["Symbol"] if not tp1_df.empty else "-"
-    smart_money = sm1_df.iloc[0]["Symbol"] if not sm1_df.empty else "-"
+def build_summary_box(tp_df, sm_df, movers_df, vol_df, setup_df, title="Market Snapshot", top_pick_label="Top Pick"):
+    top_pick = tp_df.iloc[0]["Symbol"] if not tp_df.empty else "-"
+    smart_money = sm_df.iloc[0]["Symbol"] if not sm_df.empty else "-"
     highest_mover = movers_df.iloc[0]["Symbol"] if not movers_df.empty else "-"
     most_volatile = vol_df.iloc[0]["Symbol"] if not vol_df.empty else "-"
     best_setup = setup_df.iloc[0]["Symbol"] if not setup_df.empty else "-"
@@ -268,9 +267,10 @@ def build_summary_box(tp1_df, sm1_df, movers_df, vol_df, setup_df):
         margin-bottom:18px;
         font-family:Arial;
         font-size:13px;
-        border-radius:6px;">
-      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Snapshot</h3>
-      <p style="margin:4px 0;"><b>Top Pick Today:</b> {html.escape(str(top_pick))}</p>
+        border-radius:6px;
+        box-sizing:border-box;">
+      <h3 style="margin:0 0 10px 0; color:#0b3d91;">{html.escape(title)}</h3>
+      <p style="margin:4px 0;"><b>{html.escape(top_pick_label)}:</b> {html.escape(str(top_pick))}</p>
       <p style="margin:4px 0;"><b>Best Trade Setup:</b> {html.escape(str(best_setup))}</p>
       <p style="margin:4px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
       <p style="margin:4px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
@@ -279,7 +279,7 @@ def build_summary_box(tp1_df, sm1_df, movers_df, vol_df, setup_df):
     """
 
 
-def build_market_direction_box(market_overview, symbol_summary):
+def build_market_direction_box(market_overview, symbol_summary, window_label="7D"):
     box_style = """
         border:1px solid #cfd8dc;
         background:#f8fbfd;
@@ -288,23 +288,25 @@ def build_market_direction_box(market_overview, symbol_summary):
         font-family:Arial;
         font-size:13px;
         border-radius:6px;
+        box-sizing:border-box;
     """
 
-    ov7 = filter_window(market_overview, "7D")
-    if not ov7.empty:
-        row = ov7.iloc[0]
+    ov = filter_window(market_overview, window_label)
+    if not ov.empty:
+        row = ov.iloc[0]
         buy_count = int(pd.to_numeric(row.get("buy_count", 0), errors="coerce") or 0)
         hold_count = int(pd.to_numeric(row.get("hold_count", 0), errors="coerce") or 0)
         sell_count = int(pd.to_numeric(row.get("sell_count", 0), errors="coerce") or 0)
         median_score = pd.to_numeric(row.get("median_score", None), errors="coerce")
         avg_vol_surge = pd.to_numeric(row.get("avg_vol_surge", None), errors="coerce")
     else:
-        ss7 = filter_window(symbol_summary, "7D")
-        buy_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "BUY").sum())
-        hold_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "HOLD").sum())
-        sell_count = int((ss7.get("recommendation", pd.Series(dtype=str)) == "SELL / AVOID").sum())
-        median_score = pd.to_numeric(ss7.get("score", pd.Series(dtype=float)), errors="coerce").median()
-        avg_vol_surge = pd.to_numeric(ss7.get("vol_surge", pd.Series(dtype=float)), errors="coerce").mean()
+        ss = filter_window(symbol_summary, window_label)
+        rec = ss.get("recommendation", pd.Series(dtype=str)).astype(str).str.upper().str.strip()
+        buy_count = int((rec == "BUY").sum())
+        hold_count = int((rec == "HOLD").sum())
+        sell_count = int((rec == "SELL / AVOID").sum())
+        median_score = pd.to_numeric(ss.get("score", pd.Series(dtype=float)), errors="coerce").median()
+        avg_vol_surge = pd.to_numeric(ss.get("vol_surge", pd.Series(dtype=float)), errors="coerce").mean()
 
     if buy_count > sell_count and buy_count >= hold_count:
         bias = "Bullish"
@@ -321,7 +323,7 @@ def build_market_direction_box(market_overview, symbol_summary):
 
     return f"""
     <div style="{box_style}">
-      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Direction (7D)</h3>
+      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Direction ({html.escape(window_label)})</h3>
       <p style="margin:4px 0;"><b>Bullish Stocks:</b> {buy_count}</p>
       <p style="margin:4px 0;"><b>Neutral Stocks:</b> {hold_count}</p>
       <p style="margin:4px 0;"><b>Bearish Stocks:</b> {sell_count}</p>
@@ -411,6 +413,15 @@ def build_email_body(report_path):
 
     tp7 = prepare_table(
         filter_list(filter_window(top_picks, "7D"), "TOP_BUY"),
+        top_picks_map,
+        round_cols=["Last Price", "VWAP", "Score"],
+        sort_by="quantity",
+        ascending=False,
+        limit=10,
+    )
+
+    tp15 = prepare_table(
+        filter_list(filter_window(top_picks, "15D"), "TOP_BUY"),
         top_picks_map,
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="quantity",
@@ -554,8 +565,27 @@ def build_email_body(report_path):
     </div>
     """
 
-    summary_box = build_summary_box(tp1, sm1, movers, vol, setups)
-    market_direction_box = build_market_direction_box(market_overview, symbol_summary)
+    summary_box_1d = build_summary_box(
+        tp1, sm1, movers, vol, setups,
+        title="Market Snapshot (1D)",
+        top_pick_label="Top Pick Today"
+    )
+
+    summary_box_7d = build_summary_box(
+        tp7, sm7, movers, vol, setups,
+        title="Market Snapshot (7D)",
+        top_pick_label="Top Pick 7D"
+    )
+
+    summary_box_15d = build_summary_box(
+        tp15, sm15, movers, vol, setups,
+        title="Market Snapshot (15D)",
+        top_pick_label="Top Pick 15D"
+    )
+
+    market_direction_box_1d = build_market_direction_box(market_overview, symbol_summary, "1D")
+    market_direction_box_7d = build_market_direction_box(market_overview, symbol_summary, "7D")
+    market_direction_box_15d = build_market_direction_box(market_overview, symbol_summary, "15D")
 
     html_body = f"""
     <html>
@@ -565,8 +595,22 @@ def build_email_body(report_path):
 
     <p>Please find today's NEPSE trading summary generated from the latest Retail-Pro Excel report.</p>
 
-    {summary_box}
-    {market_direction_box}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:18px;">
+      <tr>
+        <td width="33.33%" valign="top" style="padding-right:8px;">
+          {summary_box_1d}
+          {market_direction_box_1d}
+        </td>
+        <td width="33.33%" valign="top" style="padding-left:4px;padding-right:4px;">
+          {summary_box_7d}
+          {market_direction_box_7d}
+        </td>
+        <td width="33.33%" valign="top" style="padding-left:8px;">
+          {summary_box_15d}
+          {market_direction_box_15d}
+        </td>
+      </tr>
+    </table>
 
     {format_html_table(tp1, "Today Top Buy Picks (1D)")}
     {format_html_table(tp7, "Top Buy Picks (7D)")}
@@ -591,19 +635,23 @@ def build_email_body(report_path):
 Report Date: {report_date}
 
 Included Reports:
-1. Market Snapshot
-2. Market Direction (7D)
-3. Today Top Buy Picks (1D)
-4. Top Buy Picks (7D)
-5. Best Smart Money Stocks (1D)
-6. Best Smart Money Stocks (7D)
-7. Best Smart Money Stocks (15D)
-8. Best Swing Trading Stocks (7D)
-9. Best Trade Setups (7D)
-10. Highest Movement Stocks (7D)
-11. Most Volatile Stocks (7D)
-12. Top Performing Sectors (7D)
-13. Operator Activity Warning (7D)
+1. Market Snapshot (1D)
+2. Market Direction (1D)
+3. Market Snapshot (7D)
+4. Market Direction (7D)
+5. Market Snapshot (15D)
+6. Market Direction (15D)
+7. Today Top Buy Picks (1D)
+8. Top Buy Picks (7D)
+9. Best Smart Money Stocks (1D)
+10. Best Smart Money Stocks (7D)
+11. Best Smart Money Stocks (15D)
+12. Best Swing Trading Stocks (7D)
+13. Best Trade Setups (7D)
+14. Highest Movement Stocks (7D)
+15. Most Volatile Stocks (7D)
+16. Top Performing Sectors (7D)
+17. Operator Activity Warning (7D)
 
 Regards,
 Trading Report Bot
