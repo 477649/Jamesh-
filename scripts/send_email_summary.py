@@ -526,7 +526,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=15,
+        limit=10,
     )
 
     sm15 = prepare_table(
@@ -537,7 +537,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=15,
+        limit=10,
     )
 
     top_picks_map = [
@@ -812,7 +812,7 @@ def build_email_body(report_path):
     {format_html_table(movers7, "Highest Movement Stocks (7D)")}
     {format_html_table(vol7, "Most Volatile Stocks (7D)")}
     {format_html_table(sectors, "Top Performing Sectors (7D)")}
-    {format_html_table(operator_warn, "Operator Activity Warning (7D)")}
+    {format_html_table(operator_warn, "Operator Activity Warning (15D)")}
 
     <br>
     <p>Regards,<br><b>Trading Report Bot</b></p>
@@ -841,7 +841,7 @@ Included Reports:
 14. Highest Movement Stocks (7D)
 15. Most Volatile Stocks (7D)
 16. Top Performing Sectors (7D)
-17. Operator Activity Warning (7D)
+17. Operator Activity Warning (15D)
 
 Regards,
 Trading Report Bot
