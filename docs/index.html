@@ -40,6 +40,7 @@
     .metric-sub{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.35}
     label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
     input,select,button{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:#0b1430;color:var(--text)}
+    input[readonly]{opacity:.95}
     button{cursor:pointer;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2))}
     button.secondary{background:#0b1430}
     button.ghost{background:#162346}
@@ -91,7 +92,10 @@
     </div>
     <div class="card right-note">
       <div class="metric-label">Required files</div>
-      <div class="metric-sub">Upload <b>floor_sheet.csv</b> and <b>share_price.csv</b>. Optional: <b>symbol_mapping.csv</b> with symbol, sector, source. You can also click <b>Load Demo</b> and test the full dashboard instantly.</div>
+      <div class="metric-sub">
+        Upload <b>floor_sheet.csv</b> and <b>share_price.csv</b>, or load them directly from GitHub raw URLs.
+        Optional: <b>symbol_mapping.csv</b> with symbol, sector, source. You can also click <b>Load Demo</b>.
+      </div>
     </div>
   </div>
 
@@ -119,6 +123,28 @@
       <div style="display:flex;gap:8px;align-items:end">
         <button class="ghost" id="resetBtn" type="button">Reset</button>
         <button class="ghost" id="exportBtn" type="button">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="sub-grid" style="margin-top:14px">
+      <div>
+        <label>GitHub Floor Sheet Raw URL</label>
+        <input id="floorUrlInput" value="https://raw.githubusercontent.com/477649/nepse-floorsheet-daily-scraper/main/outputs/Floor%20Sheet/floorsheet_2025-12-14.csv" />
+      </div>
+      <div>
+        <label>GitHub Share Price Raw URL</label>
+        <input id="priceUrlInput" value="https://raw.githubusercontent.com/477649/nepse-floorsheet-daily-scraper/main/outputs/sharesansar/SharePrice_2025-12-24.csv" />
+      </div>
+      <div>
+        <label>GitHub Mapping Raw URL (optional)</label>
+        <input id="mapUrlInput" placeholder="https://raw.githubusercontent.com/.../symbol_mapping.csv" />
+      </div>
+      <div style="display:flex;gap:8px;align-items:end">
+        <button id="githubLoadBtn" type="button">Load GitHub Data</button>
+      </div>
+      <div>
+        <label>Status</label>
+        <input id="loadStatus" value="Waiting for data..." readonly />
       </div>
     </div>
 
@@ -457,7 +483,20 @@ function parseMap(rows){
   }).filter(r=>r.symbol);
 }
 function parseCSV(file){
-  return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>resolve(res.data),error:reject}));
+  return new Promise((resolve,reject)=>Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    complete:(res)=>resolve(res.data),
+    error:reject
+  }));
+}
+function parseCSVText(text){
+  return new Promise((resolve,reject)=>Papa.parse(text,{
+    header:true,
+    skipEmptyLines:true,
+    complete:(res)=>resolve(res.data),
+    error:reject
+  }));
 }
 function retFrom(prices, days){
   if(prices.length<2) return 0;
@@ -471,6 +510,61 @@ function bucketSignal(tradeScore){
   if(tradeScore >= 50) return 'Hold';
   if(tradeScore >= 35) return 'Reduce';
   return 'Sell';
+}
+
+function setStatus(message){
+  const el = document.getElementById('loadStatus');
+  if(el) el.value = message;
+}
+
+async function fetchCSVFromUrl(url){
+  const cleaned = String(url || '').trim();
+  if(!cleaned) return [];
+  const res = await fetch(cleaned, {cache:'no-store'});
+  if(!res.ok) throw new Error(`Failed to fetch: ${res.status} ${res.statusText}`);
+  const text = await res.text();
+  return parseCSVText(text);
+}
+
+async function loadGitHubData(){
+  const floorUrl = document.getElementById('floorUrlInput').value.trim();
+  const priceUrl = document.getElementById('priceUrlInput').value.trim();
+  const mapUrl = document.getElementById('mapUrlInput').value.trim();
+
+  if(!floorUrl || !priceUrl){
+    alert('Please enter both Floor Sheet and Share Price raw GitHub URLs.');
+    return;
+  }
+
+  try{
+    setStatus('Loading GitHub CSV files...');
+    document.getElementById('githubLoadBtn').disabled = true;
+
+    const [floorRows, priceRows, mapRows] = await Promise.all([
+      fetchCSVFromUrl(floorUrl),
+      fetchCSVFromUrl(priceUrl),
+      mapUrl ? fetchCSVFromUrl(mapUrl) : Promise.resolve([])
+    ]);
+
+    floorData = parseFloor(floorRows);
+    priceData = parsePrice(priceRows);
+    mapData = mapRows.length ? parseMap(mapRows) : [];
+
+    if(!floorData.length) throw new Error('Floor Sheet CSV loaded, but no valid rows were parsed.');
+    if(!priceData.length) throw new Error('Share Price CSV loaded, but no valid rows were parsed.');
+
+    populateFilters();
+    resetFilters();
+    await analyzeNow();
+
+    setStatus(`Loaded GitHub data successfully. Floor rows: ${floorData.length}, Price rows: ${priceData.length}, Mapping rows: ${mapData.length}`);
+  }catch(err){
+    console.error(err);
+    setStatus(`Load failed: ${err.message}`);
+    alert(`GitHub load failed.\n${err.message}`);
+  }finally{
+    document.getElementById('githubLoadBtn').disabled = false;
+  }
 }
 
 function computeAnalysis(){
@@ -515,7 +609,7 @@ function computeAnalysis(){
   const floorBySymbol=groupBy(f, x=>x.symbol);
   let symbols = unique([...priceBySymbol.keys()].filter(s=>floorBySymbol.has(s)));
 
-  const summary=[], brokerStats={}, dailyUniverse={}, sectorGroups={};
+  const summary=[], brokerStats={}, dailyUniverse={};
 
   for(const symbol of symbols){
     const prices = sortDate(priceBySymbol.get(symbol));
@@ -608,12 +702,11 @@ function computeAnalysis(){
   const accums=summary.map(x=>x.accumRaw), dists=summary.map(x=>x.distRaw),
         breakouts=summary.map(x=>x.breakoutRaw), breakdowns=summary.map(x=>x.breakdownRaw),
         controls=summary.map(x=>x.brokerControl), vols=summary.map(x=>x.volatility),
-        divs=summary.map(x=>x.divergence), rets20=summary.map(x=>x.ret20), nets=summary.map(x=>x.smartNet);
+        rets20=summary.map(x=>x.ret20);
 
   summary.forEach(x=>{
     const accumulation = rankPct(x.accumRaw, accums);
     const breakout = rankPct(x.breakoutRaw, breakouts);
-    const sectorPlaceholder = 50;
     const dist = rankPct(x.distRaw, dists);
     const breakdown = rankPct(x.breakdownRaw, breakdowns);
     const risk = (
@@ -692,25 +785,24 @@ function computeAnalysis(){
 function render(){
   const data=currentAnalysis;
   const rows=data.summary;
-  const all=data.allSummary;
   const bestSector=data.sectorRows[0]?.sector || '-';
 
   document.getElementById('mSymbols').textContent=rows.length;
   document.getElementById('mNetSmart').textContent=fmt(sum(rows.map(x=>x.smartNet)));
-  document.getElementById('mTradeScore').textContent=avg(rows.map(x=>x.tradeScore)).toFixed(1);
+  document.getElementById('mTradeScore').textContent=rows.length ? avg(rows.map(x=>x.tradeScore)).toFixed(1) : '-';
   document.getElementById('mBullish').textContent=rows.filter(x=>x.signal==='Strong Buy' || x.signal==='Buy Watchlist').length;
   document.getElementById('mSellRisk').textContent=rows.filter(x=>x.signal==='Reduce' || x.signal==='Sell').length;
-  document.getElementById('mVolatility').textContent=avg(rows.map(x=>x.volatility)).toFixed(2);
-  document.getElementById('mControl').textContent=avg(rows.map(x=>x.brokerControl)).toFixed(1)+'%';
+  document.getElementById('mVolatility').textContent=rows.length ? avg(rows.map(x=>x.volatility)).toFixed(2) : '-';
+  document.getElementById('mControl').textContent=rows.length ? avg(rows.map(x=>x.brokerControl)).toFixed(1)+'%' : '-';
   document.getElementById('mSector').textContent=bestSector;
 
   document.getElementById('mSymbolsSub').textContent='symbols matching current filters';
   document.getElementById('mNetSmartSub').textContent=sum(rows.map(x=>x.smartNet)) >= 0 ? 'positive universe bias' : 'distribution pressure';
-  document.getElementById('mTradeScoreSub').textContent=avg(rows.map(x=>x.tradeScore)) >= 65 ? 'favorable risk/reward mix' : 'mixed quality screen';
+  document.getElementById('mTradeScoreSub').textContent=rows.length && avg(rows.map(x=>x.tradeScore)) >= 65 ? 'favorable risk/reward mix' : 'mixed quality screen';
   document.getElementById('mBullishSub').textContent='strong buy plus watchlist';
   document.getElementById('mSellRiskSub').textContent='reduce plus sell';
-  document.getElementById('mVolatilitySub').textContent=avg(rows.map(x=>x.volatility)) > 3 ? 'elevated move risk' : 'controlled move';
-  document.getElementById('mControlSub').textContent=avg(rows.map(x=>x.brokerControl)) > 60 ? 'high broker dominance' : 'broader participation';
+  document.getElementById('mVolatilitySub').textContent=rows.length && avg(rows.map(x=>x.volatility)) > 3 ? 'elevated move risk' : 'controlled move';
+  document.getElementById('mControlSub').textContent=rows.length && avg(rows.map(x=>x.brokerControl)) > 60 ? 'high broker dominance' : 'broader participation';
   document.getElementById('mSectorSub').textContent='highest average score';
 
   renderOverview();
@@ -980,7 +1072,7 @@ function exportCSV(){
 
 async function analyzeNow(){
   if(!floorData.length || !priceData.length){
-    alert('Please upload floor sheet and share price CSV, or click Load Demo.');
+    alert('Please upload floor sheet and share price CSV, or click Load Demo, or use Load GitHub Data.');
     return;
   }
   populateFilters();
@@ -1040,20 +1132,34 @@ function buildDemo(){
   }
   populateFilters();
   resetFilters();
+  setStatus('Demo data loaded.');
   analyzeNow();
 }
 
 document.getElementById('floorFile').addEventListener('change', async e=>{
-  if(e.target.files[0]){ floorData=parseFloor(await parseCSV(e.target.files[0])); populateFilters(); }
+  if(e.target.files[0]){
+    floorData=parseFloor(await parseCSV(e.target.files[0]));
+    populateFilters();
+    setStatus(`Local floor sheet loaded. Rows: ${floorData.length}`);
+  }
 });
 document.getElementById('priceFile').addEventListener('change', async e=>{
-  if(e.target.files[0]){ priceData=parsePrice(await parseCSV(e.target.files[0])); populateFilters(); }
+  if(e.target.files[0]){
+    priceData=parsePrice(await parseCSV(e.target.files[0]));
+    populateFilters();
+    setStatus(`Local share price loaded. Rows: ${priceData.length}`);
+  }
 });
 document.getElementById('mapFile').addEventListener('change', async e=>{
-  if(e.target.files[0]){ mapData=parseMap(await parseCSV(e.target.files[0])); populateFilters(); }
+  if(e.target.files[0]){
+    mapData=parseMap(await parseCSV(e.target.files[0]));
+    populateFilters();
+    setStatus(`Local mapping loaded. Rows: ${mapData.length}`);
+  }
 });
 document.getElementById('analyzeBtn').addEventListener('click', analyzeNow);
 document.getElementById('demoBtn').addEventListener('click', buildDemo);
+document.getElementById('githubLoadBtn').addEventListener('click', loadGitHubData);
 document.getElementById('resetBtn').addEventListener('click', ()=>{ resetFilters(); if(priceData.length&&floorData.length) analyzeNow(); });
 document.getElementById('exportBtn').addEventListener('click', exportCSV);
 
