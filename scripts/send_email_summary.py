@@ -526,7 +526,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     sm15 = prepare_table(
@@ -537,7 +537,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     top_picks_map = [
@@ -731,13 +731,13 @@ def build_email_body(report_path):
     ]
 
     operator_warn = prepare_table(
-        filter_window(operator_radar, "7D"),
+        filter_window(operator_radar, "15D"),
         operator_map,
         round_cols=["Operator Score", "Concentration %", "Flip Ratio"],
         percent_cols=["Concentration %"],
         sort_by="operator_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     header_html = f"""
