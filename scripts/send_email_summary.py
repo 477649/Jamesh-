@@ -259,38 +259,47 @@ def build_summary_box(tp_df, sm_df, movers_df, vol_df, setup_df, title="Market S
     most_volatile = vol_df.iloc[0]["Symbol"] if not vol_df.empty else "-"
     best_setup = setup_df.iloc[0]["Symbol"] if not setup_df.empty else "-"
 
+    title_upper = title.upper()
+    if "1D" in title_upper:
+        accent = "#1565c0"
+        border = "#90caf9"
+        bg = "linear-gradient(180deg,#f4f9ff,#e3f2fd)"
+    elif "7D" in title_upper:
+        accent = "#2e7d32"
+        border = "#a5d6a7"
+        bg = "linear-gradient(180deg,#f4fff6,#e8f5e9)"
+    elif "15D" in title_upper:
+        accent = "#6a1b9a"
+        border = "#d1c4e9"
+        bg = "linear-gradient(180deg,#fbf7ff,#f3e5f5)"
+    else:
+        accent = "#0b3d91"
+        border = "#cfd8dc"
+        bg = "linear-gradient(180deg,#f8fbfd,#eef4f8)"
+
     return f"""
     <div style="
-        border:1px solid #cfd8dc;
-        background:#f8fbfd;
-        padding:12px 14px;
+        border:1px solid {border};
+        border-left:6px solid {accent};
+        background:{bg};
+        padding:14px 16px;
         margin-bottom:18px;
         font-family:Arial;
         font-size:13px;
-        border-radius:6px;
-        box-sizing:border-box;">
-      <h3 style="margin:0 0 10px 0; color:#0b3d91;">{html.escape(title)}</h3>
-      <p style="margin:4px 0;"><b>{html.escape(top_pick_label)}:</b> {html.escape(str(top_pick))}</p>
-      <p style="margin:4px 0;"><b>Best Trade Setup:</b> {html.escape(str(best_setup))}</p>
-      <p style="margin:4px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
-      <p style="margin:4px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
-      <p style="margin:4px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
+        border-radius:10px;
+        box-sizing:border-box;
+        box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+      <h3 style="margin:0 0 12px 0; color:{accent}; font-size:16px;">{html.escape(title)}</h3>
+      <p style="margin:6px 0;"><b>{html.escape(top_pick_label)}:</b> {html.escape(str(top_pick))}</p>
+      <p style="margin:6px 0;"><b>Best Trade Setup:</b> {html.escape(str(best_setup))}</p>
+      <p style="margin:6px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
+      <p style="margin:6px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
+      <p style="margin:6px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
     </div>
     """
 
 
 def build_market_direction_box(market_overview, symbol_summary, window_label="7D"):
-    box_style = """
-        border:1px solid #cfd8dc;
-        background:#f8fbfd;
-        padding:12px 14px;
-        margin-bottom:18px;
-        font-family:Arial;
-        font-size:13px;
-        border-radius:6px;
-        box-sizing:border-box;
-    """
-
     ov = filter_window(market_overview, window_label)
     if not ov.empty:
         row = ov.iloc[0]
@@ -311,25 +320,57 @@ def build_market_direction_box(market_overview, symbol_summary, window_label="7D
     if buy_count > sell_count and buy_count >= hold_count:
         bias = "Bullish"
         bias_color = "#1b5e20"
+        bias_bg = "#e8f5e9"
+        accent = "#2e7d32"
+        border = "#a5d6a7"
+        bg = "linear-gradient(180deg,#f4fff6,#e8f5e9)"
     elif sell_count > buy_count:
         bias = "Bearish"
         bias_color = "#b71c1c"
+        bias_bg = "#ffebee"
+        accent = "#c62828"
+        border = "#ef9a9a"
+        bg = "linear-gradient(180deg,#fff7f7,#ffebee)"
     else:
         bias = "Neutral"
         bias_color = "#8d6e63"
+        bias_bg = "#fff8e1"
+        accent = "#f9a825"
+        border = "#ffe082"
+        bg = "linear-gradient(180deg,#fffdf4,#fff8e1)"
 
     median_score_txt = f"{median_score:.2f}" if pd.notna(median_score) else "-"
     avg_vol_surge_txt = f"{avg_vol_surge:.2f}" if pd.notna(avg_vol_surge) else "-"
 
     return f"""
-    <div style="{box_style}">
-      <h3 style="margin:0 0 10px 0; color:#0b3d91;">Market Direction ({html.escape(window_label)})</h3>
-      <p style="margin:4px 0;"><b>Bullish Stocks:</b> {buy_count}</p>
-      <p style="margin:4px 0;"><b>Neutral Stocks:</b> {hold_count}</p>
-      <p style="margin:4px 0;"><b>Bearish Stocks:</b> {sell_count}</p>
-      <p style="margin:4px 0;"><b>Median Score:</b> {median_score_txt}</p>
-      <p style="margin:4px 0;"><b>Average Volume Surge:</b> {avg_vol_surge_txt}</p>
-      <p style="margin:6px 0 0 0;"><b>Market Bias:</b> <span style="color:{bias_color};font-weight:bold;">{bias}</span></p>
+    <div style="
+        border:1px solid {border};
+        border-left:6px solid {accent};
+        background:{bg};
+        padding:14px 16px;
+        margin-bottom:18px;
+        font-family:Arial;
+        font-size:13px;
+        border-radius:10px;
+        box-sizing:border-box;
+        box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+      <h3 style="margin:0 0 12px 0; color:{accent}; font-size:16px;">Market Direction ({html.escape(window_label)})</h3>
+      <p style="margin:6px 0;"><b>Bullish Stocks:</b> {buy_count}</p>
+      <p style="margin:6px 0;"><b>Neutral Stocks:</b> {hold_count}</p>
+      <p style="margin:6px 0;"><b>Bearish Stocks:</b> {sell_count}</p>
+      <p style="margin:6px 0;"><b>Median Score:</b> {median_score_txt}</p>
+      <p style="margin:6px 0;"><b>Average Volume Surge:</b> {avg_vol_surge_txt}</p>
+      <p style="margin:10px 0 0 0;">
+        <b>Market Bias:</b>
+        <span style="
+            display:inline-block;
+            padding:4px 10px;
+            border-radius:999px;
+            background:{bias_bg};
+            color:{bias_color};
+            font-weight:bold;
+            border:1px solid {border};">{bias}</span>
+      </p>
     </div>
     """
 
@@ -556,8 +597,9 @@ def build_email_body(report_path):
         background:linear-gradient(90deg,#0b3d91,#1565c0);
         color:white;
         padding:16px 20px;
-        border-radius:8px;
-        margin-bottom:18px;">
+        border-radius:10px;
+        margin-bottom:18px;
+        box-shadow:0 3px 10px rgba(21,101,192,0.25);">
         <h2 style="margin:0;font-family:Arial;">NEPSE Smart Money & Trading Summary</h2>
         <p style="margin:6px 0 0 0;font-family:Arial;font-size:13px;">
             Report Date: {html.escape(report_date)}
@@ -589,11 +631,11 @@ def build_email_body(report_path):
 
     html_body = f"""
     <html>
-    <body style="font-family:Arial;font-size:13px;background:#ffffff;color:#222;padding:10px;">
+    <body style="font-family:Arial;font-size:13px;background:#f7f9fc;color:#222;padding:10px;">
 
     {header_html}
 
-    <p>Please find today's NEPSE trading summary generated from the latest Retail-Pro Excel report.</p>
+    <p style="font-size:14px;color:#37474f;">Please find today's NEPSE trading summary generated from the latest Retail-Pro Excel report.</p>
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:18px;">
       <tr>
