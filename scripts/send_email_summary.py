@@ -783,7 +783,7 @@ def build_email_body(report_path):
 
     {header_html}
 
-    <p style="font-size:14px;color:#37474f;">Please find today's NEPSE trading summary generated from the latest Retail-Pro Excel report.</p>
+    <p style="font-size:14px;color:#37474f;">Please find today's NEPSE trading summary.</p>
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:18px;">
       <tr>
@@ -815,7 +815,7 @@ def build_email_body(report_path):
     {format_html_table(operator_warn, "Operator Activity Warning (7D)")}
 
     <br>
-    <p>Regards,<br><b>Trading Report Bot</b></p>
+    <p>Regards,<br><b>Bhupen Trading Inight System</b></p>
 
     </body>
     </html>
