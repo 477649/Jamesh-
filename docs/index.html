@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Advanced Smart Money Stock Screener</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --bg:#07111f;
+      --bg2:#0c1730;
+      --panel:#101a35;
+      --panel2:#142249;
+      --line:rgba(255,255,255,.09);
+      --text:#edf3ff;
+      --muted:#9eb2d6;
+      --accent:#3b82f6;
+      --accent2:#22d3ee;
+      --good:#22c55e;
+      --warn:#f59e0b;
+      --bad:#ef4444;
+      --shadow:0 10px 28px rgba(0,0,0,.28);
+      --radius:18px;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:linear-gradient(180deg,var(--bg),var(--bg2) 45%,#11203e);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}
+    .app{max-width:1760px;margin:0 auto;padding:20px}
+    .hero{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}
+    .hero h1{margin:0;font-size:34px;letter-spacing:.2px}
+    .hero p{margin:10px 0 0;color:var(--muted);max-width:980px;line-height:1.55}
+    .panel,.card,.controls,.tabs{background:rgba(16,26,53,.92);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(10px)}
+    .controls{padding:16px;margin-top:18px}
+    .filter-grid{display:grid;grid-template-columns:1.2fr 1.2fr .8fr .8fr .8fr .8fr .8fr .8fr auto;gap:10px;align-items:end}
+    .sub-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;margin-top:10px}
+    .metrics{display:grid;grid-template-columns:repeat(8,1fr);gap:12px;margin:18px 0}
+    .card{padding:15px}
+    .metric-label{font-size:12px;color:var(--muted)}
+    .metric-value{font-size:25px;font-weight:800;margin-top:8px}
+    .metric-sub{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.35}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input,select,button{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:#0b1430;color:var(--text)}
+    button{cursor:pointer;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+    button.secondary{background:#0b1430}
+    button.ghost{background:#162346}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;padding:10px;margin-bottom:16px}
+    .tab-btn{width:auto;padding:10px 14px;background:#0b1430;border:1px solid var(--line);color:var(--muted)}
+    .tab-btn.active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:white}
+    .view{display:none}
+    .view.active{display:block}
+    .grid{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .panel{padding:16px}
+    .panel h3{margin:0 0 14px;font-size:17px}
+    .panel h4{margin:0 0 10px;font-size:14px;color:var(--muted)}
+    .full{grid-column:1/-1}
+    .span2{grid-column:span 2}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .list-item{padding:12px;border-radius:12px;background:#0c1430;border:1px solid var(--line)}
+    .list-item .sub{color:var(--muted);font-size:12px;margin-top:6px;line-height:1.45}
+    .pill{display:inline-block;padding:5px 9px;border-radius:999px;font-size:11px;background:#112042;border:1px solid var(--line);color:#d4e2ff}
+    .pill.good{color:#bbf7d0}
+    .pill.bad{color:#fecaca}
+    .pill.warn{color:#fde68a}
+    .good{color:var(--good)}
+    .bad{color:var(--bad)}
+    .warn{color:var(--warn)}
+    .muted{color:var(--muted)}
+    .scroll{overflow:auto;max-height:480px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px;white-space:nowrap}
+    th{position:sticky;top:0;background:#101a35;color:var(--muted);font-weight:600}
+    tr:hover td{background:rgba(255,255,255,.03)}
+    canvas{max-height:360px}
+    .footer{margin-top:18px;color:var(--muted);font-size:12px;line-height:1.5}
+    .inline-actions{display:flex;gap:8px}
+    .right-note{min-width:320px;max-width:390px}
+    .clickable{cursor:pointer}
+    .detail-box{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:1450px){.metrics{grid-template-columns:repeat(4,1fr)} .grid{grid-template-columns:1fr 1fr}}
+    @media (max-width:1050px){.filter-grid,.sub-grid,.metrics,.grid,.grid-2,.grid-4,.detail-box{grid-template-columns:1fr} .span2{grid-column:auto}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="hero">
+    <div>
+      <h1>Advanced Smart Money Stock Screener</h1>
+      <p>Single-file HTML, CSS, and JavaScript dashboard for floor sheet, share price, and optional symbol-sector-source mapping. Built for GitHub Pages. Includes buy screener, sell screener, sector flow, broker intelligence, risk monitor, symbol deep dive, export tools, and interactive charts.</p>
+    </div>
+    <div class="card right-note">
+      <div class="metric-label">Required files</div>
+      <div class="metric-sub">Upload <b>floor_sheet.csv</b> and <b>share_price.csv</b>. Optional: <b>symbol_mapping.csv</b> with symbol, sector, source. You can also click <b>Load Demo</b> and test the full dashboard instantly.</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="filter-grid">
+      <div><label>Floor Sheet CSV</label><input type="file" id="floorFile" accept=".csv" /></div>
+      <div><label>Share Price CSV</label><input type="file" id="priceFile" accept=".csv" /></div>
+      <div><label>Mapping CSV</label><input type="file" id="mapFile" accept=".csv" /></div>
+      <div><label>Symbol</label><select id="symbolFilter"><option value="">All Symbols</option></select></div>
+      <div><label>Sector</label><select id="sectorFilter"><option value="">All Sectors</option></select></div>
+      <div><label>Source</label><select id="sourceFilter"><option value="">All Sources</option></select></div>
+      <div><label>Signal</label><select id="signalFilter"><option value="">All Signals</option><option>Strong Buy</option><option>Buy Watchlist</option><option>Hold</option><option>Reduce</option><option>Sell</option></select></div>
+      <div><label>Lookback</label><select id="lookbackFilter"><option value="0">All Days</option><option value="20">20 Days</option><option value="30">30 Days</option><option value="60" selected>60 Days</option><option value="90">90 Days</option><option value="120">120 Days</option></select></div>
+      <div class="inline-actions">
+        <button id="analyzeBtn">Analyze</button>
+        <button class="secondary" id="demoBtn" type="button">Load Demo</button>
+      </div>
+    </div>
+
+    <div class="sub-grid">
+      <div><label>Symbol search</label><input id="searchInput" placeholder="Search symbol..." /></div>
+      <div><label>Broker focus</label><input id="brokerInput" placeholder="Broker code..." /></div>
+      <div><label>Minimum trade score</label><select id="minScore"><option value="0">0</option><option value="40">40</option><option value="50">50</option><option value="60" selected>60</option><option value="70">70</option><option value="80">80</option></select></div>
+      <div><label>Sort by</label><select id="sortBy"><option value="tradeScore">Trade Score</option><option value="buyScore">Buy Score</option><option value="sellScore">Sell Score</option><option value="smartNet">Net Smart Money</option><option value="ret60">60D Return</option><option value="riskScore">Risk Score</option><option value="brokerControl">Broker Control</option></select></div>
+      <div style="display:flex;gap:8px;align-items:end">
+        <button class="ghost" id="resetBtn" type="button">Reset</button>
+        <button class="ghost" id="exportBtn" type="button">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="footer">Accepted floor sheet aliases: date, symbol, buyer_broker, seller_broker, quantity, rate or price, amount or turnover. Accepted share price aliases: date, symbol, open, high, low, close, volume. Mapping aliases: symbol, sector, source.</div>
+  </div>
+
+  <div class="metrics">
+    <div class="card"><div class="metric-label">Tracked Symbols</div><div class="metric-value" id="mSymbols">-</div><div class="metric-sub" id="mSymbolsSub">after filters</div></div>
+    <div class="card"><div class="metric-label">Net Smart Money</div><div class="metric-value" id="mNetSmart">-</div><div class="metric-sub" id="mNetSmartSub">universe flow balance</div></div>
+    <div class="card"><div class="metric-label">Avg Trade Score</div><div class="metric-value" id="mTradeScore">-</div><div class="metric-sub" id="mTradeScoreSub">composite buy/sell quality</div></div>
+    <div class="card"><div class="metric-label">Bullish Symbols</div><div class="metric-value" id="mBullish">-</div><div class="metric-sub" id="mBullishSub">strong buy + watchlist</div></div>
+    <div class="card"><div class="metric-label">Sell Risk</div><div class="metric-value" id="mSellRisk">-</div><div class="metric-sub" id="mSellRiskSub">reduce + sell counts</div></div>
+    <div class="card"><div class="metric-label">Avg Volatility</div><div class="metric-value" id="mVolatility">-</div><div class="metric-sub" id="mVolatilitySub">daily return stdev</div></div>
+    <div class="card"><div class="metric-label">Broker Control</div><div class="metric-value" id="mControl">-</div><div class="metric-sub" id="mControlSub">top broker concentration</div></div>
+    <div class="card"><div class="metric-label">Strongest Sector</div><div class="metric-value" id="mSector">-</div><div class="metric-sub" id="mSectorSub">best average trade score</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="buy">Buy Screener</button>
+    <button class="tab-btn" data-tab="sell">Sell Screener</button>
+    <button class="tab-btn" data-tab="sector">Sector Flow</button>
+    <button class="tab-btn" data-tab="broker">Broker Intelligence</button>
+    <button class="tab-btn" data-tab="risk">Risk Monitor</button>
+    <button class="tab-btn" data-tab="deepdive">Symbol Deep Dive</button>
+  </div>
+
+  <div id="overview" class="view active">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Universe Smart Money vs Market Price</h3>
+        <canvas id="overviewFlowChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Key Insights</h3>
+        <div class="list" id="overviewInsights"></div>
+      </div>
+      <div class="panel">
+        <h3>Trade Score Map</h3>
+        <canvas id="overviewScatter"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Signal Breakdown</h3>
+        <canvas id="signalChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Top Ranked Symbols</h3>
+        <div class="list" id="topRanked"></div>
+      </div>
+      <div class="panel full">
+        <h3>Master Screener</h3>
+        <div class="scroll">
+          <table id="masterTable">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Sector</th><th>Source</th><th>Close</th><th>5D %</th><th>20D %</th><th>60D %</th>
+                <th>Net Flow</th><th>Buy Score</th><th>Sell Score</th><th>Trade Score</th><th>Risk</th>
+                <th>Broker Control</th><th>Signal</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="buy" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Buy Candidates Bubble Map</h3>
+        <canvas id="buyBubble"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Buy Insights</h3>
+        <div class="list" id="buyInsights"></div>
+      </div>
+      <div class="panel full">
+        <h3>Buy Screener</h3>
+        <div class="scroll">
+          <table id="buyTable">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Sector</th><th>Close</th><th>Net Flow</th><th>Accumulation</th><th>Breakout</th><th>Sector Support</th><th>Risk</th><th>Trade Score</th><th>Signal</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sell" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Distribution Risk Map</h3>
+        <canvas id="sellBubble"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Sell Insights</h3>
+        <div class="list" id="sellInsights"></div>
+      </div>
+      <div class="panel full">
+        <h3>Sell Screener</h3>
+        <div class="scroll">
+          <table id="sellTable">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Sector</th><th>Close</th><th>Net Flow</th><th>Distribution</th><th>Breakdown Risk</th><th>Broker Exit</th><th>Risk</th><th>Trade Score</th><th>Signal</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sector" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Sector Rotation Chart</h3>
+        <canvas id="sectorChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Sector Commentary</h3>
+        <div class="list" id="sectorInsights"></div>
+      </div>
+      <div class="panel full">
+        <h3>Sector Flow Table</h3>
+        <div class="scroll">
+          <table id="sectorTable">
+            <thead>
+              <tr>
+                <th>Sector</th><th>Symbols</th><th>Net Flow</th><th>Avg Buy Score</th><th>Avg Sell Score</th><th>Avg Trade Score</th><th>Avg Risk</th><th>Leader</th><th>Laggard</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="broker" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Top Broker Turnover</h3>
+        <canvas id="brokerChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Broker Insights</h3>
+        <div class="list" id="brokerInsights"></div>
+      </div>
+      <div class="panel full">
+        <h3>Broker Leaderboard</h3>
+        <div class="scroll">
+          <table id="brokerTable">
+            <thead>
+              <tr>
+                <th>Broker</th><th>Gross Turnover</th><th>Net Bias</th><th>Buy Symbols</th><th>Sell Symbols</th><th>Dominant Sector</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="risk" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Risk Heat Map</h3>
+        <canvas id="riskChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Risk Alerts</h3>
+        <div class="list" id="riskInsights"></div>
+      </div>
+      <div class="panel full">
+        <h3>Risk Monitor Table</h3>
+        <div class="scroll">
+          <table id="riskTable">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Sector</th><th>Volatility</th><th>Broker Control</th><th>Divergence</th><th>Liquidity</th><th>Risk Score</th><th>Warning</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="deepdive" class="view">
+    <div class="grid">
+      <div class="panel span2">
+        <h3>Selected Symbol: <span id="deepTitle">-</span></h3>
+        <canvas id="deepChart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Decision Box</h3>
+        <div class="list" id="deepDecision"></div>
+      </div>
+      <div class="panel full">
+        <div class="detail-box">
+          <div class="panel" style="padding:14px">
+            <h3 style="font-size:15px">Top Buyers</h3>
+            <div class="list" id="deepBuyers"></div>
+          </div>
+          <div class="panel" style="padding:14px">
+            <h3 style="font-size:15px">Top Sellers</h3>
+            <div class="list" id="deepSellers"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel full">
+        <h3>Daily Flow Table</h3>
+        <div class="scroll">
+          <table id="deepTable">
+            <thead>
+              <tr><th>Date</th><th>Close</th><th>Volume</th><th>Net Flow</th><th>Flow Signal</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    To make this live on GitHub Pages, save this file as <b>index.html</b> in your repository root and enable Pages from the main branch.
+  </div>
+</div>
+
+<script>
+let floorData=[], priceData=[], mapData=[], charts={}, currentAnalysis=null, selectedSymbol='';
+
+const aliases = {
+  date:['date','trade_date','business_date'],
+  symbol:['symbol','stock','script','security','ticker'],
+  buyer:['buyer_broker','buyer broker','buy_broker','buyer','buyer member code'],
+  seller:['seller_broker','seller broker','sell_broker','seller','seller member code'],
+  quantity:['quantity','qty','volume','contract_quantity','shares'],
+  rate:['rate','price','trade_price','close_rate'],
+  amount:['amount','turnover','value','trade_value','net_amount'],
+  open:['open'],
+  high:['high'],
+  low:['low'],
+  close:['close','ltp','close_price','last_traded_price'],
+  pvolume:['volume','qty','turnover_volume'],
+  sector:['sector','sector_name','group','industry','subindex'],
+  source:['source','exchange','board','segment','market']
+};
+
+function nk(s){return (s||'').toString().trim().toLowerCase().replace(/[_-]+/g,' ').replace(/\s+/g,' ')}
+function findKey(row, names){ for(const k of Object.keys(row)){ if(names.includes(nk(k))) return k; } return null; }
+function num(v){ const x=parseFloat(String(v??'').replace(/,/g,'').trim()); return Number.isFinite(x)?x:0; }
+function unique(arr){ return [...new Set(arr)]; }
+function sum(arr){ return arr.reduce((a,b)=>a+b,0); }
+function avg(arr){ return arr.length ? sum(arr)/arr.length : 0; }
+function stdev(arr){ if(arr.length<2) return 0; const m=avg(arr); return Math.sqrt(avg(arr.map(x=>(x-m)*(x-m)))); }
+function corr(x,y){
+  if(x.length!==y.length || x.length<2) return 0;
+  const mx=avg(x), my=avg(y); let n=0, dx=0, dy=0;
+  for(let i=0;i<x.length;i++){ const a=x[i]-mx, b=y[i]-my; n+=a*b; dx+=a*a; dy+=b*b; }
+  return dx&&dy ? n/Math.sqrt(dx*dy) : 0;
+}
+function rankPct(value, arr){ if(!arr.length) return 0; return arr.filter(x=>x<=value).length / arr.length * 100; }
+function fmt(v){
+  if(!Number.isFinite(v)) return '-';
+  const a=Math.abs(v);
+  if(a>=1e7) return (v/1e7).toFixed(2)+'Cr';
+  if(a>=1e5) return (v/1e5).toFixed(2)+'L';
+  if(a>=1e3) return (v/1e3).toFixed(1)+'K';
+  return v.toFixed(2);
+}
+function pct(v){ return Number.isFinite(v) ? v.toFixed(2)+'%' : '-'; }
+function groupBy(arr, fn){
+  const m=new Map();
+  for(const item of arr){
+    const k=fn(item);
+    if(!m.has(k)) m.set(k, []);
+    m.get(k).push(item);
+  }
+  return m;
+}
+function sortDate(arr, key='date'){ return [...arr].sort((a,b)=>new Date(a[key])-new Date(b[key])); }
+function destroy(name){ if(charts[name]) charts[name].destroy(); }
+function signalClass(s){ return s.includes('Buy') ? 'good' : (s==='Hold' ? 'warn' : 'bad'); }
+
+function parseFloor(rows){
+  return rows.map(r=>{
+    const k={
+      date:findKey(r,aliases.date), symbol:findKey(r,aliases.symbol),
+      buyer:findKey(r,aliases.buyer), seller:findKey(r,aliases.seller),
+      quantity:findKey(r,aliases.quantity), rate:findKey(r,aliases.rate),
+      amount:findKey(r,aliases.amount), sector:findKey(r,aliases.sector), source:findKey(r,aliases.source)
+    };
+    const quantity=num(r[k.quantity]), rate=num(r[k.rate]), amount=num(r[k.amount]) || quantity*rate;
+    return {
+      date:r[k.date], symbol:String(r[k.symbol]||'').trim().toUpperCase(),
+      buyer:String(r[k.buyer]||'').trim(), seller:String(r[k.seller]||'').trim(),
+      quantity, rate, amount,
+      sector:String(r[k.sector]||'').trim(), source:String(r[k.source]||'').trim()
+    };
+  }).filter(r=>r.date && r.symbol);
+}
+function parsePrice(rows){
+  return rows.map(r=>{
+    const k={
+      date:findKey(r,aliases.date), symbol:findKey(r,aliases.symbol),
+      open:findKey(r,aliases.open), high:findKey(r,aliases.high),
+      low:findKey(r,aliases.low), close:findKey(r,aliases.close),
+      volume:findKey(r,aliases.pvolume), sector:findKey(r,aliases.sector), source:findKey(r,aliases.source)
+    };
+    return {
+      date:r[k.date], symbol:String(r[k.symbol]||'').trim().toUpperCase(),
+      open:num(r[k.open]), high:num(r[k.high]), low:num(r[k.low]),
+      close:num(r[k.close]), volume:num(r[k.volume]),
+      sector:String(r[k.sector]||'').trim(), source:String(r[k.source]||'').trim()
+    };
+  }).filter(r=>r.date && r.symbol && r.close);
+}
+function parseMap(rows){
+  return rows.map(r=>{
+    const k={symbol:findKey(r,aliases.symbol), sector:findKey(r,aliases.sector), source:findKey(r,aliases.source)};
+    return {
+      symbol:String(r[k.symbol]||'').trim().toUpperCase(),
+      sector:String(r[k.sector]||'').trim(),
+      source:String(r[k.source]||'').trim()
+    };
+  }).filter(r=>r.symbol);
+}
+function parseCSV(file){
+  return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>resolve(res.data),error:reject}));
+}
+function retFrom(prices, days){
+  if(prices.length<2) return 0;
+  const arr=prices.slice(-days);
+  if(arr.length<2) return 0;
+  return ((arr.at(-1).close - arr[0].close) / arr[0].close) * 100;
+}
+function bucketSignal(tradeScore){
+  if(tradeScore >= 80) return 'Strong Buy';
+  if(tradeScore >= 65) return 'Buy Watchlist';
+  if(tradeScore >= 50) return 'Hold';
+  if(tradeScore >= 35) return 'Reduce';
+  return 'Sell';
+}
+
+function computeAnalysis(){
+  const opts = {
+    symbol:document.getElementById('symbolFilter').value,
+    sector:document.getElementById('sectorFilter').value,
+    source:document.getElementById('sourceFilter').value,
+    signal:document.getElementById('signalFilter').value,
+    lookback:+document.getElementById('lookbackFilter').value,
+    search:document.getElementById('searchInput').value.trim().toUpperCase(),
+    broker:document.getElementById('brokerInput').value.trim(),
+    minScore:+document.getElementById('minScore').value,
+    sortBy:document.getElementById('sortBy').value
+  };
+
+  let f=[...floorData], p=[...priceData];
+  const mapBySymbol = new Map(mapData.map(x=>[x.symbol,x]));
+
+  f.forEach(r=>{
+    const m=mapBySymbol.get(r.symbol)||{};
+    r.sector = r.sector || m.sector || 'Unmapped';
+    r.source = r.source || m.source || 'Default';
+  });
+  p.forEach(r=>{
+    const m=mapBySymbol.get(r.symbol)||{};
+    r.sector = r.sector || m.sector || 'Unmapped';
+    r.source = r.source || m.source || 'Default';
+  });
+
+  if(opts.symbol){ f=f.filter(x=>x.symbol===opts.symbol); p=p.filter(x=>x.symbol===opts.symbol); }
+  if(opts.sector){ f=f.filter(x=>x.sector===opts.sector); p=p.filter(x=>x.sector===opts.sector); }
+  if(opts.source){ f=f.filter(x=>x.source===opts.source); p=p.filter(x=>x.source===opts.source); }
+  if(opts.broker){ f=f.filter(x=>String(x.buyer).includes(opts.broker) || String(x.seller).includes(opts.broker)); }
+  if(opts.lookback>0){
+    const dates=unique(p.map(x=>x.date)).sort();
+    const cutoff=dates.slice(-opts.lookback)[0];
+    f=f.filter(x=>x.date>=cutoff);
+    p=p.filter(x=>x.date>=cutoff);
+  }
+
+  const priceBySymbol=groupBy(sortDate(p), x=>x.symbol);
+  const floorBySymbol=groupBy(f, x=>x.symbol);
+  let symbols = unique([...priceBySymbol.keys()].filter(s=>floorBySymbol.has(s)));
+
+  const summary=[], brokerStats={}, dailyUniverse={}, sectorGroups={};
+
+  for(const symbol of symbols){
+    const prices = sortDate(priceBySymbol.get(symbol));
+    const trades = floorBySymbol.get(symbol) || [];
+    const info = prices[prices.length-1] || {};
+    const sector = info.sector || trades[0]?.sector || 'Unmapped';
+    const source = info.source || trades[0]?.source || 'Default';
+
+    const buy={}, sell={}, dailyNet={}, dailyGross={}, priceByDate={}, volumeByDate={};
+    prices.forEach(x=>{ priceByDate[x.date]=x.close; volumeByDate[x.date]=x.volume; });
+
+    for(const t of trades){
+      buy[t.buyer]=(buy[t.buyer]||0)+t.amount;
+      sell[t.seller]=(sell[t.seller]||0)+t.amount;
+
+      dailyNet[t.date]=dailyNet[t.date]||0;
+      dailyGross[t.date]=dailyGross[t.date]||0;
+      dailyNet[t.date]+=t.amount;
+      dailyGross[t.date]+=t.amount;
+
+      brokerStats[t.buyer]=brokerStats[t.buyer]||{gross:0, net:0, buySymbols:new Set(), sellSymbols:new Set(), sectorBias:{}};
+      brokerStats[t.seller]=brokerStats[t.seller]||{gross:0, net:0, buySymbols:new Set(), sellSymbols:new Set(), sectorBias:{}};
+
+      brokerStats[t.buyer].gross += t.amount;
+      brokerStats[t.buyer].net += t.amount;
+      brokerStats[t.buyer].buySymbols.add(symbol);
+      brokerStats[t.buyer].sectorBias[sector]=(brokerStats[t.buyer].sectorBias[sector]||0)+t.amount;
+
+      brokerStats[t.seller].gross += t.amount;
+      brokerStats[t.seller].net -= t.amount;
+      brokerStats[t.seller].sellSymbols.add(symbol);
+      brokerStats[t.seller].sectorBias[sector]=(brokerStats[t.seller].sectorBias[sector]||0)-t.amount;
+    }
+
+    const brokerRows = unique([...Object.keys(buy), ...Object.keys(sell)]).map(b=>({
+      broker:b,
+      buy:buy[b]||0,
+      sell:sell[b]||0,
+      net:(buy[b]||0)-(sell[b]||0),
+      gross:(buy[b]||0)+(sell[b]||0)
+    })).sort((a,b)=>b.net-a.net);
+
+    const closes = prices.map(x=>x.close);
+    const volumes = prices.map(x=>x.volume);
+    const returns = closes.slice(1).map((c,i)=>((c-closes[i])/closes[i])*100);
+    const ret5 = retFrom(prices,5), ret20 = retFrom(prices,20), ret60 = retFrom(prices,60);
+    const volatility = stdev(returns);
+    const totalAmt = sum(trades.map(x=>x.amount));
+    const grossTop5 = brokerRows.slice().sort((a,b)=>b.gross-a.gross).slice(0,5);
+    const brokerControl = totalAmt ? sum(grossTop5.map(x=>x.gross))/totalAmt*100 : 0;
+    const smartNet = sum(brokerRows.map(x=>x.net));
+
+    const priceChanges = prices.slice(1).map((x,i)=>((x.close-prices[i].close)/prices[i].close)*100);
+    const volChanges = volumes.slice(1).map((x,i)=>volumes[i]?((x-volumes[i])/volumes[i])*100:0);
+    const divergence = -corr(priceChanges, volChanges)*100;
+
+    const positiveDays = Object.values(dailyNet).filter(x=>x>0).length;
+    const negativeDays = Object.values(dailyNet).filter(x=>x<0).length;
+    const liquidity = avg(volumes);
+    const breakoutRaw = Math.max(0, ret20) + Math.max(0, divergence/2) + (smartNet/(totalAmt||1))*150;
+    const breakdownRaw = Math.max(0, -ret20) + Math.max(0, -divergence/2) + Math.max(0, (-smartNet/(totalAmt||1))*150);
+    const accumRaw = (smartNet/(totalAmt||1))*100 + positiveDays - negativeDays + Math.max(0, ret5/3);
+    const distRaw = (-smartNet/(totalAmt||1))*100 + negativeDays - positiveDays + Math.max(0, -ret5/3);
+
+    const dailyRows = unique([...Object.keys(dailyNet), ...prices.map(x=>x.date)]).sort().map(date=>({
+      date,
+      close: priceByDate[date] || null,
+      volume: volumeByDate[date] || 0,
+      netFlow: dailyNet[date] || 0
+    }));
+
+    dailyRows.forEach(r=>{
+      dailyUniverse[r.date]=dailyUniverse[r.date]||{flow:0, closeCount:0, closeSum:0};
+      dailyUniverse[r.date].flow += r.netFlow;
+      if(r.close){ dailyUniverse[r.date].closeSum += r.close; dailyUniverse[r.date].closeCount += 1; }
+    });
+
+    summary.push({
+      symbol, sector, source,
+      close: closes.at(-1)||0, ret5, ret20, ret60,
+      smartNet, volatility, divergence, liquidity, brokerControl,
+      accumRaw, distRaw, breakoutRaw, breakdownRaw,
+      totalAmt, buyScore:0, sellScore:0, tradeScore:0, riskScore:0, signal:'',
+      prices, trades, dailyRows, brokerRows,
+      topBuyers:brokerRows.slice(0,5),
+      topSellers:brokerRows.slice().sort((a,b)=>a.net-b.net).slice(0,5)
+    });
+  }
+
+  const accums=summary.map(x=>x.accumRaw), dists=summary.map(x=>x.distRaw),
+        breakouts=summary.map(x=>x.breakoutRaw), breakdowns=summary.map(x=>x.breakdownRaw),
+        controls=summary.map(x=>x.brokerControl), vols=summary.map(x=>x.volatility),
+        divs=summary.map(x=>x.divergence), rets20=summary.map(x=>x.ret20), nets=summary.map(x=>x.smartNet);
+
+  summary.forEach(x=>{
+    const accumulation = rankPct(x.accumRaw, accums);
+    const breakout = rankPct(x.breakoutRaw, breakouts);
+    const sectorPlaceholder = 50;
+    const dist = rankPct(x.distRaw, dists);
+    const breakdown = rankPct(x.breakdownRaw, breakdowns);
+    const risk = (
+      rankPct(x.brokerControl, controls)*0.35 +
+      rankPct(x.volatility, vols)*0.35 +
+      (100-rankPct(x.liquidity, summary.map(y=>y.liquidity)))*0.15 +
+      Math.max(0,-x.divergence)
+    );
+    x.buyScore = accumulation*0.42 + breakout*0.20 + rankPct(x.ret20, rets20)*0.18 + (100-rankPct(x.brokerControl, controls))*0.10 + Math.max(0,x.divergence)*0.10;
+    x.sellScore = dist*0.42 + breakdown*0.20 + rankPct(-x.ret20, rets20.map(v=>-v))*0.18 + rankPct(x.brokerControl, controls)*0.10 + Math.max(0,-x.divergence)*0.10;
+    x.riskScore = Math.max(0, Math.min(100, risk/1.15));
+    x.tradeScore = Math.max(0, Math.min(100, x.buyScore*0.65 + (100-x.sellScore)*0.20 + (100-x.riskScore)*0.15));
+  });
+
+  const sectorAgg = {};
+  summary.forEach(x=>{
+    sectorAgg[x.sector]=sectorAgg[x.sector]||{sector:x.sector, symbols:[], netFlow:0, buy:[], sell:[], trade:[], risk:[]};
+    sectorAgg[x.sector].symbols.push(x);
+    sectorAgg[x.sector].netFlow += x.smartNet;
+    sectorAgg[x.sector].buy.push(x.buyScore);
+    sectorAgg[x.sector].sell.push(x.sellScore);
+    sectorAgg[x.sector].trade.push(x.tradeScore);
+    sectorAgg[x.sector].risk.push(x.riskScore);
+  });
+  const sectorRows = Object.values(sectorAgg).map(s=>({
+    sector:s.sector,
+    symbols:s.symbols.length,
+    netFlow:s.netFlow,
+    avgBuy:avg(s.buy),
+    avgSell:avg(s.sell),
+    avgTrade:avg(s.trade),
+    avgRisk:avg(s.risk),
+    leader:s.symbols.slice().sort((a,b)=>b.tradeScore-a.tradeScore)[0]?.symbol || '-',
+    laggard:s.symbols.slice().sort((a,b)=>a.tradeScore-b.tradeScore)[0]?.symbol || '-'
+  })).sort((a,b)=>b.avgTrade-a.avgTrade);
+
+  const sectorTradeScores = Object.fromEntries(sectorRows.map(x=>[x.sector,x.avgTrade]));
+  summary.forEach(x=>{
+    x.buyScore = Math.min(100, x.buyScore + (sectorTradeScores[x.sector]||50)*0.08);
+    x.sellScore = Math.min(100, x.sellScore + (100-(sectorTradeScores[x.sector]||50))*0.08);
+    x.tradeScore = Math.max(0, Math.min(100, x.buyScore*0.65 + (100-x.sellScore)*0.20 + (100-x.riskScore)*0.15));
+    x.signal = bucketSignal(x.tradeScore);
+  });
+
+  let filtered = [...summary];
+  if(opts.search) filtered = filtered.filter(x=>x.symbol.includes(opts.search));
+  if(opts.signal) filtered = filtered.filter(x=>x.signal===opts.signal);
+  if(opts.minScore) filtered = filtered.filter(x=>x.tradeScore>=opts.minScore);
+  filtered.sort((a,b)=>(b[opts.sortBy]||0)-(a[opts.sortBy]||0));
+
+  const brokerRows = Object.entries(brokerStats).map(([broker,info])=>{
+    const domSector = Object.entries(info.sectorBias).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]))[0]?.[0] || '-';
+    return {
+      broker,
+      gross:info.gross,
+      net:info.net,
+      buySymbols:[...info.buySymbols].slice(0,6).join(', '),
+      sellSymbols:[...info.sellSymbols].slice(0,6).join(', '),
+      dominantSector:domSector
+    };
+  }).sort((a,b)=>b.gross-a.gross).slice(0,20);
+
+  const universeDates = Object.keys(dailyUniverse).sort();
+  const universeFlow = universeDates.map(d=>dailyUniverse[d].flow);
+  const universeClose = universeDates.map(d=>dailyUniverse[d].closeCount ? dailyUniverse[d].closeSum/dailyUniverse[d].closeCount : null);
+
+  currentAnalysis = {opts, summary:filtered, allSummary:summary, sectorRows, brokerRows, universeDates, universeFlow, universeClose};
+
+  if(!selectedSymbol || !filtered.find(x=>x.symbol===selectedSymbol)){
+    selectedSymbol = filtered[0]?.symbol || summary[0]?.symbol || '';
+  }
+
+  render();
+}
+
+function render(){
+  const data=currentAnalysis;
+  const rows=data.summary;
+  const all=data.allSummary;
+  const bestSector=data.sectorRows[0]?.sector || '-';
+
+  document.getElementById('mSymbols').textContent=rows.length;
+  document.getElementById('mNetSmart').textContent=fmt(sum(rows.map(x=>x.smartNet)));
+  document.getElementById('mTradeScore').textContent=avg(rows.map(x=>x.tradeScore)).toFixed(1);
+  document.getElementById('mBullish').textContent=rows.filter(x=>x.signal==='Strong Buy' || x.signal==='Buy Watchlist').length;
+  document.getElementById('mSellRisk').textContent=rows.filter(x=>x.signal==='Reduce' || x.signal==='Sell').length;
+  document.getElementById('mVolatility').textContent=avg(rows.map(x=>x.volatility)).toFixed(2);
+  document.getElementById('mControl').textContent=avg(rows.map(x=>x.brokerControl)).toFixed(1)+'%';
+  document.getElementById('mSector').textContent=bestSector;
+
+  document.getElementById('mSymbolsSub').textContent='symbols matching current filters';
+  document.getElementById('mNetSmartSub').textContent=sum(rows.map(x=>x.smartNet)) >= 0 ? 'positive universe bias' : 'distribution pressure';
+  document.getElementById('mTradeScoreSub').textContent=avg(rows.map(x=>x.tradeScore)) >= 65 ? 'favorable risk/reward mix' : 'mixed quality screen';
+  document.getElementById('mBullishSub').textContent='strong buy plus watchlist';
+  document.getElementById('mSellRiskSub').textContent='reduce plus sell';
+  document.getElementById('mVolatilitySub').textContent=avg(rows.map(x=>x.volatility)) > 3 ? 'elevated move risk' : 'controlled move';
+  document.getElementById('mControlSub').textContent=avg(rows.map(x=>x.brokerControl)) > 60 ? 'high broker dominance' : 'broader participation';
+  document.getElementById('mSectorSub').textContent='highest average score';
+
+  renderOverview();
+  renderBuy();
+  renderSell();
+  renderSector();
+  renderBroker();
+  renderRisk();
+  renderDeepDive();
+}
+
+function renderOverview(){
+  const data=currentAnalysis, rows=data.summary;
+  destroy('overviewFlowChart');
+  charts.overviewFlowChart = new Chart(document.getElementById('overviewFlowChart'),{
+    type:'line',
+    data:{labels:data.universeDates,datasets:[
+      {label:'Universe Net Flow', data:data.universeFlow, yAxisID:'y'},
+      {label:'Universe Avg Price', data:data.universeClose, yAxisID:'y1'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{y:{position:'left'},y1:{position:'right',grid:{drawOnChartArea:false}}}}
+  });
+
+  destroy('overviewScatter');
+  charts.overviewScatter = new Chart(document.getElementById('overviewScatter'),{
+    type:'scatter',
+    data:{datasets:[{label:'Symbols',data:rows.map(x=>({x:x.ret20,y:x.tradeScore,r:Math.max(5,Math.min(18,Math.abs(x.smartNet)/100000))}))}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:(ctx)=>`${rows[ctx.dataIndex].symbol}: 20D ${ctx.raw.x.toFixed(2)}%, Score ${ctx.raw.y.toFixed(1)}`}}},scales:{x:{title:{display:true,text:'20D Return %'}},y:{title:{display:true,text:'Trade Score'}}}}
+  });
+
+  const breakdown = ['Strong Buy','Buy Watchlist','Hold','Reduce','Sell'].map(sig=>rows.filter(x=>x.signal===sig).length);
+  destroy('signalChart');
+  charts.signalChart = new Chart(document.getElementById('signalChart'),{
+    type:'bar',
+    data:{labels:['Strong Buy','Buy Watchlist','Hold','Reduce','Sell'],datasets:[{label:'Count',data:breakdown}]},
+    options:{responsive:true,maintainAspectRatio:false}
+  });
+
+  document.getElementById('overviewInsights').innerHTML = [
+    insightBox(`Top buy candidate: ${rows[0]?.symbol || '-'}`, `Trade score ${rows[0]?.tradeScore?.toFixed(1) || '-'}, sector ${rows[0]?.sector || '-'}, net flow ${fmt(rows[0]?.smartNet || 0)}.`),
+    insightBox(`Top risk candidate: ${rows.slice().sort((a,b)=>b.riskScore-a.riskScore)[0]?.symbol || '-'}`, `Highest composite risk based on volatility, concentration, divergence, and liquidity.`),
+    insightBox(`Sector leadership: ${currentAnalysis.sectorRows[0]?.sector || '-'}`, `Average trade score ${currentAnalysis.sectorRows[0]?.avgTrade?.toFixed(1) || '-'} with net flow ${fmt(currentAnalysis.sectorRows[0]?.netFlow || 0)}.`),
+    insightBox(`Sell pressure zone: ${rows.filter(x=>x.signal==='Sell').slice(0,3).map(x=>x.symbol).join(', ') || 'None'}`, `These names rank lowest on flow quality and price confirmation.`)
+  ].join('');
+
+  document.getElementById('topRanked').innerHTML = rows.slice(0,8).map(x=>`
+    <div class="list-item clickable" onclick="pickSymbol('${x.symbol}')">
+      <b>${x.symbol}</b> <span class="pill ${signalClass(x.signal)}">${x.signal}</span>
+      <div class="sub">Sector: ${x.sector} | Close: ${x.close.toFixed(2)} | Net flow: ${fmt(x.smartNet)} | Score: ${x.tradeScore.toFixed(1)}</div>
+    </div>
+  `).join('');
+
+  document.querySelector('#masterTable tbody').innerHTML = rows.map(x=>`
+    <tr class="clickable" onclick="pickSymbol('${x.symbol}')">
+      <td><b>${x.symbol}</b></td><td>${x.sector}</td><td>${x.source}</td><td>${x.close.toFixed(2)}</td>
+      <td class="${x.ret5>=0?'good':'bad'}">${pct(x.ret5)}</td><td class="${x.ret20>=0?'good':'bad'}">${pct(x.ret20)}</td><td class="${x.ret60>=0?'good':'bad'}">${pct(x.ret60)}</td>
+      <td class="${x.smartNet>=0?'good':'bad'}">${fmt(x.smartNet)}</td><td>${x.buyScore.toFixed(1)}</td><td>${x.sellScore.toFixed(1)}</td><td>${x.tradeScore.toFixed(1)}</td><td>${x.riskScore.toFixed(1)}</td><td>${x.brokerControl.toFixed(1)}%</td>
+      <td><span class="pill ${signalClass(x.signal)}">${x.signal}</span></td>
+    </tr>
+  `).join('');
+}
+
+function renderBuy(){
+  const rows=currentAnalysis.summary.filter(x=>x.signal==='Strong Buy' || x.signal==='Buy Watchlist');
+  destroy('buyBubble');
+  charts.buyBubble = new Chart(document.getElementById('buyBubble'),{
+    type:'bubble',
+    data:{datasets:[{label:'Buy candidates',data:rows.map(x=>({x:x.buyScore,y:x.tradeScore,r:Math.max(6,Math.min(22,x.close/50))}))}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:(ctx)=>`${rows[ctx.dataIndex].symbol}: Buy ${ctx.raw.x.toFixed(1)}, Trade ${ctx.raw.y.toFixed(1)}`}}},scales:{x:{title:{display:true,text:'Buy Score'}},y:{title:{display:true,text:'Trade Score'}}}}
+  });
+
+  document.getElementById('buyInsights').innerHTML = [
+    insightBox(`Strong buy list`, `${rows.filter(x=>x.signal==='Strong Buy').slice(0,5).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`Steady accumulation`, `${rows.slice().sort((a,b)=>b.smartNet-a.smartNet).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`Breakout watch`, `${rows.slice().sort((a,b)=>b.ret20-a.ret20).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+  ].join('');
+
+  document.querySelector('#buyTable tbody').innerHTML = rows.map(x=>`
+    <tr class="clickable" onclick="pickSymbol('${x.symbol}')">
+      <td><b>${x.symbol}</b></td><td>${x.sector}</td><td>${x.close.toFixed(2)}</td><td class="${x.smartNet>=0?'good':'bad'}">${fmt(x.smartNet)}</td>
+      <td>${x.buyScore.toFixed(1)}</td><td>${(x.ret20 + Math.max(0,x.divergence/2)).toFixed(1)}</td><td>${(currentAnalysis.sectorRows.find(s=>s.sector===x.sector)?.avgTrade || 0).toFixed(1)}</td>
+      <td>${x.riskScore.toFixed(1)}</td><td>${x.tradeScore.toFixed(1)}</td><td><span class="pill ${signalClass(x.signal)}">${x.signal}</span></td>
+    </tr>
+  `).join('');
+}
+
+function renderSell(){
+  const rows=currentAnalysis.summary.filter(x=>x.signal==='Reduce' || x.signal==='Sell');
+  destroy('sellBubble');
+  charts.sellBubble = new Chart(document.getElementById('sellBubble'),{
+    type:'bubble',
+    data:{datasets:[{label:'Sell candidates',data:rows.map(x=>({x:x.sellScore,y:x.riskScore,r:Math.max(6,Math.min(22,x.close/50))}))}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:(ctx)=>`${rows[ctx.dataIndex].symbol}: Sell ${ctx.raw.x.toFixed(1)}, Risk ${ctx.raw.y.toFixed(1)}`}}},scales:{x:{title:{display:true,text:'Sell Score'}},y:{title:{display:true,text:'Risk Score'}}}}
+  });
+
+  document.getElementById('sellInsights').innerHTML = [
+    insightBox(`Highest distribution`, `${rows.slice().sort((a,b)=>b.sellScore-a.sellScore).slice(0,5).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`Weak 20D return`, `${rows.slice().sort((a,b)=>a.ret20-b.ret20).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`Concentration danger`, `${rows.slice().sort((a,b)=>b.brokerControl-a.brokerControl).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+  ].join('');
+
+  document.querySelector('#sellTable tbody').innerHTML = rows.map(x=>`
+    <tr class="clickable" onclick="pickSymbol('${x.symbol}')">
+      <td><b>${x.symbol}</b></td><td>${x.sector}</td><td>${x.close.toFixed(2)}</td><td class="${x.smartNet>=0?'good':'bad'}">${fmt(x.smartNet)}</td>
+      <td>${x.sellScore.toFixed(1)}</td><td>${(Math.max(0,-x.ret20) + Math.max(0,-x.divergence/2)).toFixed(1)}</td><td>${x.topSellers[0]?.broker || '-'}</td><td>${x.riskScore.toFixed(1)}</td><td>${x.tradeScore.toFixed(1)}</td><td><span class="pill ${signalClass(x.signal)}">${x.signal}</span></td>
+    </tr>
+  `).join('');
+}
+
+function renderSector(){
+  const rows=currentAnalysis.sectorRows;
+  destroy('sectorChart');
+  charts.sectorChart = new Chart(document.getElementById('sectorChart'),{
+    type:'bar',
+    data:{labels:rows.map(x=>x.sector),datasets:[
+      {label:'Avg Trade Score',data:rows.map(x=>x.avgTrade)},
+      {label:'Net Flow',data:rows.map(x=>x.netFlow)}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false}
+  });
+
+  document.getElementById('sectorInsights').innerHTML = [
+    insightBox(`Best sector`, `${rows[0]?.sector || '-'} with score ${rows[0]?.avgTrade?.toFixed(1) || '-'} and net flow ${fmt(rows[0]?.netFlow || 0)}.`),
+    insightBox(`Weakest sector`, `${rows.at(-1)?.sector || '-'} with score ${rows.at(-1)?.avgTrade?.toFixed(1) || '-'} and net flow ${fmt(rows.at(-1)?.netFlow || 0)}.`),
+    insightBox(`Rotation idea`, `${rows.filter(x=>x.netFlow>0).slice(0,3).map(x=>x.sector).join(', ') || 'No clear positive sector flow'}`),
+  ].join('');
+
+  document.querySelector('#sectorTable tbody').innerHTML = rows.map(x=>`
+    <tr>
+      <td><b>${x.sector}</b></td><td>${x.symbols}</td><td class="${x.netFlow>=0?'good':'bad'}">${fmt(x.netFlow)}</td><td>${x.avgBuy.toFixed(1)}</td><td>${x.avgSell.toFixed(1)}</td><td>${x.avgTrade.toFixed(1)}</td><td>${x.avgRisk.toFixed(1)}</td><td>${x.leader}</td><td>${x.laggard}</td>
+    </tr>
+  `).join('');
+}
+
+function renderBroker(){
+  const rows=currentAnalysis.brokerRows;
+  destroy('brokerChart');
+  charts.brokerChart = new Chart(document.getElementById('brokerChart'),{
+    type:'bar',
+    data:{labels:rows.map(x=>x.broker),datasets:[{label:'Gross turnover',data:rows.map(x=>x.gross)}]},
+    options:{responsive:true,maintainAspectRatio:false}
+  });
+
+  document.getElementById('brokerInsights').innerHTML = [
+    insightBox(`Most active broker`, `${rows[0]?.broker || '-'} with turnover ${fmt(rows[0]?.gross || 0)}.`),
+    insightBox(`Strong positive bias`, `${rows.slice().sort((a,b)=>b.net-a.net)[0]?.broker || '-'} with net ${fmt(rows.slice().sort((a,b)=>b.net-a.net)[0]?.net || 0)}.`),
+    insightBox(`Strong negative bias`, `${rows.slice().sort((a,b)=>a.net-b.net)[0]?.broker || '-'} with net ${fmt(rows.slice().sort((a,b)=>a.net-b.net)[0]?.net || 0)}.`)
+  ].join('');
+
+  document.querySelector('#brokerTable tbody').innerHTML = rows.map(x=>`
+    <tr>
+      <td><b>${x.broker}</b></td><td>${fmt(x.gross)}</td><td class="${x.net>=0?'good':'bad'}">${fmt(x.net)}</td><td>${x.buySymbols || '-'}</td><td>${x.sellSymbols || '-'}</td><td>${x.dominantSector}</td>
+    </tr>
+  `).join('');
+}
+
+function renderRisk(){
+  const rows=currentAnalysis.summary.slice().sort((a,b)=>b.riskScore-a.riskScore);
+  destroy('riskChart');
+  charts.riskChart = new Chart(document.getElementById('riskChart'),{
+    type:'bar',
+    data:{labels:rows.slice(0,12).map(x=>x.symbol),datasets:[{label:'Risk Score',data:rows.slice(0,12).map(x=>x.riskScore)}]},
+    options:{responsive:true,maintainAspectRatio:false}
+  });
+
+  document.getElementById('riskInsights').innerHTML = [
+    insightBox(`Highest risk symbols`, `${rows.slice(0,5).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`High broker control`, `${rows.filter(x=>x.brokerControl>65).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+    insightBox(`Liquidity weak`, `${rows.slice().sort((a,b)=>a.liquidity-b.liquidity).slice(0,4).map(x=>x.symbol).join(', ') || 'None'}`),
+  ].join('');
+
+  document.querySelector('#riskTable tbody').innerHTML = rows.map(x=>`
+    <tr class="clickable" onclick="pickSymbol('${x.symbol}')">
+      <td><b>${x.symbol}</b></td><td>${x.sector}</td><td>${x.volatility.toFixed(2)}</td><td>${x.brokerControl.toFixed(1)}%</td><td>${x.divergence.toFixed(1)}</td><td>${fmt(x.liquidity)}</td><td>${x.riskScore.toFixed(1)}</td><td>${x.riskScore>70?'High caution':x.riskScore>55?'Moderate caution':'Normal'}</td>
+    </tr>
+  `).join('');
+}
+
+function renderDeepDive(){
+  const row = currentAnalysis.allSummary.find(x=>x.symbol===selectedSymbol) || currentAnalysis.summary[0];
+  if(!row) return;
+
+  document.getElementById('deepTitle').textContent = `${row.symbol} • ${row.sector} • ${row.signal}`;
+  destroy('deepChart');
+  charts.deepChart = new Chart(document.getElementById('deepChart'),{
+    type:'line',
+    data:{labels:row.dailyRows.map(x=>x.date),datasets:[
+      {label:'Close',data:row.dailyRows.map(x=>x.close),yAxisID:'y1'},
+      {label:'Net Flow',data:row.dailyRows.map(x=>x.netFlow),yAxisID:'y'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{y:{position:'left'},y1:{position:'right',grid:{drawOnChartArea:false}}}}
+  });
+
+  document.getElementById('deepDecision').innerHTML = [
+    insightBox(`Final action`, `${row.signal} based on trade score ${row.tradeScore.toFixed(1)} and risk score ${row.riskScore.toFixed(1)}.`),
+    insightBox(`Smart money`, `Net flow ${fmt(row.smartNet)} with buy score ${row.buyScore.toFixed(1)} and sell score ${row.sellScore.toFixed(1)}.`),
+    insightBox(`Trend`, `5D ${pct(row.ret5)}, 20D ${pct(row.ret20)}, 60D ${pct(row.ret60)}.`),
+    insightBox(`Risk`, `Broker control ${row.brokerControl.toFixed(1)}%, volatility ${row.volatility.toFixed(2)}, divergence ${row.divergence.toFixed(1)}.`)
+  ].join('');
+
+  document.getElementById('deepBuyers').innerHTML = row.topBuyers.slice(0,5).map(x=>`
+    <div class="list-item"><b>Broker ${x.broker}</b><div class="sub">Net buy ${fmt(x.net)} | Gross ${fmt(x.gross)}</div></div>
+  `).join('');
+
+  document.getElementById('deepSellers').innerHTML = row.topSellers.slice(0,5).map(x=>`
+    <div class="list-item"><b>Broker ${x.broker}</b><div class="sub">Net sell ${fmt(x.net)} | Gross ${fmt(x.gross)}</div></div>
+  `).join('');
+
+  document.querySelector('#deepTable tbody').innerHTML = row.dailyRows.map(x=>`
+    <tr>
+      <td>${x.date}</td><td>${x.close ? x.close.toFixed(2) : '-'}</td><td>${fmt(x.volume)}</td>
+      <td class="${x.netFlow>=0?'good':'bad'}">${fmt(x.netFlow)}</td>
+      <td>${x.netFlow>0 ? 'Accumulation' : x.netFlow<0 ? 'Distribution' : 'Neutral'}</td>
+    </tr>
+  `).join('');
+}
+
+function insightBox(title, sub){ return `<div class="list-item"><b>${title}</b><div class="sub">${sub}</div></div>`; }
+function pickSymbol(symbol){
+  selectedSymbol = symbol;
+  document.getElementById('symbolFilter').value = symbol;
+  document.querySelectorAll('.tab-btn').forEach(btn=>btn.classList.remove('active'));
+  document.querySelector('.tab-btn[data-tab="deepdive"]').classList.add('active');
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('deepdive').classList.add('active');
+  computeAnalysis();
+}
+window.pickSymbol = pickSymbol;
+
+function populateFilters(){
+  const priceSymbols = unique(priceData.map(x=>x.symbol)).sort();
+  const sectors = unique([...priceData.map(x=>x.sector||''), ...floorData.map(x=>x.sector||''), ...mapData.map(x=>x.sector||'')].filter(Boolean)).sort();
+  const sources = unique([...priceData.map(x=>x.source||''), ...floorData.map(x=>x.source||''), ...mapData.map(x=>x.source||'')].filter(Boolean)).sort();
+
+  const curSymbol = document.getElementById('symbolFilter').value;
+  document.getElementById('symbolFilter').innerHTML = '<option value="">All Symbols</option>' + priceSymbols.map(s=>`<option value="${s}">${s}</option>`).join('');
+  if(priceSymbols.includes(curSymbol)) document.getElementById('symbolFilter').value = curSymbol;
+
+  document.getElementById('sectorFilter').innerHTML = '<option value="">All Sectors</option>' + sectors.map(s=>`<option value="${s}">${s}</option>`).join('');
+  document.getElementById('sourceFilter').innerHTML = '<option value="">All Sources</option>' + sources.map(s=>`<option value="${s}">${s}</option>`).join('');
+}
+
+function resetFilters(){
+  document.getElementById('symbolFilter').value='';
+  document.getElementById('sectorFilter').value='';
+  document.getElementById('sourceFilter').value='';
+  document.getElementById('signalFilter').value='';
+  document.getElementById('lookbackFilter').value='60';
+  document.getElementById('searchInput').value='';
+  document.getElementById('brokerInput').value='';
+  document.getElementById('minScore').value='60';
+  document.getElementById('sortBy').value='tradeScore';
+}
+function exportCSV(){
+  if(!currentAnalysis?.summary?.length) return alert('Nothing to export.');
+  const rows = [
+    ['symbol','sector','source','close','ret5','ret20','ret60','smartNet','buyScore','sellScore','tradeScore','riskScore','brokerControl','signal'],
+    ...currentAnalysis.summary.map(x=>[x.symbol,x.sector,x.source,x.close,x.ret5,x.ret20,x.ret60,x.smartNet,x.buyScore,x.sellScore,x.tradeScore,x.riskScore,x.brokerControl,x.signal])
+  ];
+  const csv = rows.map(r=>r.join(',')).join('\n');
+  const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download='advanced_stock_screener_export.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function analyzeNow(){
+  if(!floorData.length || !priceData.length){
+    alert('Please upload floor sheet and share price CSV, or click Load Demo.');
+    return;
+  }
+  populateFilters();
+  computeAnalysis();
+}
+
+function buildDemo(){
+  const symbols = ['NABIL','NRIC','NTC','UPPER','SBL','CHDC','NICA','NIFRA','HDL','ALICL'];
+  const map = {
+    NABIL:{sector:'Banking',source:'NEPSE'},
+    NRIC:{sector:'Insurance',source:'NEPSE'},
+    NTC:{sector:'Others',source:'NEPSE'},
+    UPPER:{sector:'Hydropower',source:'NEPSE'},
+    SBL:{sector:'Banking',source:'NEPSE'},
+    CHDC:{sector:'Hydropower',source:'NEPSE'},
+    NICA:{sector:'Finance',source:'NEPSE'},
+    NIFRA:{sector:'Finance',source:'NEPSE'},
+    HDL:{sector:'Manufacturing',source:'NEPSE'},
+    ALICL:{sector:'Insurance',source:'NEPSE'}
+  };
+  const brokers = ['58','34','22','41','49','17','50','45','25','19','39','62'];
+  floorData=[]; priceData=[]; mapData = Object.entries(map).map(([symbol,v])=>({symbol,sector:v.sector,source:v.source}));
+
+  const start = new Date();
+  start.setDate(start.getDate()-119);
+  const base = {NABIL:620,NRIC:980,NTC:410,UPPER:270,SBL:690,CHDC:540,NICA:515,NIFRA:305,HDL:1720,ALICL:625};
+
+  for(let i=0;i<120;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    const ds=d.toISOString().slice(0,10);
+
+    for(const s of symbols){
+      const drift={NABIL:1.4,NRIC:0.3,NTC:-0.1,UPPER:0.6,SBL:1.1,CHDC:0.45,NICA:0.8,NIFRA:0.25,HDL:0.5,ALICL:-0.15}[s];
+      const wave=Math.sin(i/6 + s.length)*6 + (i%9-4);
+      const close=Math.max(50, base[s] + i*drift + wave);
+      const volume=Math.round(9000 + i*180 + Math.random()*9000 + (['NABIL','SBL','HDL'].includes(s)?6000:0));
+      priceData.push({date:ds,symbol:s,open:close*0.995,high:close*1.018,low:close*0.981,close:Number(close.toFixed(2)),volume,sector:map[s].sector,source:'NEPSE'});
+
+      for(let t=0;t<8;t++){
+        const buyer=brokers[(i+t+s.length)%brokers.length];
+        const seller=brokers[(i+t+3)%brokers.length];
+        let quantity=Math.round(100 + Math.random()*650);
+        let rate=close + (Math.random()*8-4);
+
+        if(['NABIL','SBL','NICA'].includes(s) && i>65 && t<3) quantity*=2.4;
+        if(['ALICL','NRIC'].includes(s) && i>75 && t>4) quantity*=1.8;
+        if(['UPPER','CHDC'].includes(s) && i>45 && i<90 && t<2) quantity*=1.7;
+        if(s==='NTC' && i>80 && t>5) quantity*=1.9;
+
+        floorData.push({
+          date:ds,symbol:s,buyer_broker:buyer,seller_broker:seller,
+          quantity:Math.round(quantity), rate:Number(rate.toFixed(2)),
+          amount:Number((quantity*rate).toFixed(2)), sector:map[s].sector, source:'NEPSE'
+        });
+      }
+    }
+  }
+  populateFilters();
+  resetFilters();
+  analyzeNow();
+}
+
+document.getElementById('floorFile').addEventListener('change', async e=>{
+  if(e.target.files[0]){ floorData=parseFloor(await parseCSV(e.target.files[0])); populateFilters(); }
+});
+document.getElementById('priceFile').addEventListener('change', async e=>{
+  if(e.target.files[0]){ priceData=parsePrice(await parseCSV(e.target.files[0])); populateFilters(); }
+});
+document.getElementById('mapFile').addEventListener('change', async e=>{
+  if(e.target.files[0]){ mapData=parseMap(await parseCSV(e.target.files[0])); populateFilters(); }
+});
+document.getElementById('analyzeBtn').addEventListener('click', analyzeNow);
+document.getElementById('demoBtn').addEventListener('click', buildDemo);
+document.getElementById('resetBtn').addEventListener('click', ()=>{ resetFilters(); if(priceData.length&&floorData.length) analyzeNow(); });
+document.getElementById('exportBtn').addEventListener('click', exportCSV);
+
+['symbolFilter','sectorFilter','sourceFilter','signalFilter','lookbackFilter','minScore','sortBy'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', ()=>{ if(priceData.length&&floorData.length) analyzeNow(); });
+});
+['searchInput','brokerInput'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', ()=>{ if(priceData.length&&floorData.length) analyzeNow(); });
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
