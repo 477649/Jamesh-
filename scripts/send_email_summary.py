@@ -192,32 +192,140 @@ def get_cell_style(column, value):
     return ""
 
 
+def get_table_theme(title):
+    title_upper = title.upper()
+
+    if "1D" in title_upper:
+        return {
+            "accent": "#1565c0",
+            "border": "#90caf9",
+            "header_bg": "linear-gradient(90deg,#1565c0,#1e88e5)",
+            "section_bg": "linear-gradient(180deg,#f8fbff,#eef5ff)",
+            "empty_bg": "linear-gradient(180deg,#f8fbff,#eef5ff)",
+            "stripe": "#f7fbff",
+        }
+    if "7D" in title_upper:
+        return {
+            "accent": "#2e7d32",
+            "border": "#a5d6a7",
+            "header_bg": "linear-gradient(90deg,#2e7d32,#43a047)",
+            "section_bg": "linear-gradient(180deg,#f7fff8,#eef9f0)",
+            "empty_bg": "linear-gradient(180deg,#f7fff8,#eef9f0)",
+            "stripe": "#f8fff8",
+        }
+    if "15D" in title_upper:
+        return {
+            "accent": "#6a1b9a",
+            "border": "#d1c4e9",
+            "header_bg": "linear-gradient(90deg,#6a1b9a,#8e24aa)",
+            "section_bg": "linear-gradient(180deg,#fcf9ff,#f4ecfb)",
+            "empty_bg": "linear-gradient(180deg,#fcf9ff,#f4ecfb)",
+            "stripe": "#fcf8ff",
+        }
+    if "SECTOR" in title_upper:
+        return {
+            "accent": "#ef6c00",
+            "border": "#ffcc80",
+            "header_bg": "linear-gradient(90deg,#ef6c00,#fb8c00)",
+            "section_bg": "linear-gradient(180deg,#fffaf5,#fff3e8)",
+            "empty_bg": "linear-gradient(180deg,#fffaf5,#fff3e8)",
+            "stripe": "#fffaf6",
+        }
+    if "OPERATOR" in title_upper or "WARNING" in title_upper:
+        return {
+            "accent": "#c62828",
+            "border": "#ef9a9a",
+            "header_bg": "linear-gradient(90deg,#c62828,#e53935)",
+            "section_bg": "linear-gradient(180deg,#fff8f8,#ffefef)",
+            "empty_bg": "linear-gradient(180deg,#fff8f8,#ffefef)",
+            "stripe": "#fff9f9",
+        }
+
+    return {
+        "accent": "#0b3d91",
+        "border": "#cfd8dc",
+        "header_bg": "linear-gradient(90deg,#0b3d91,#1565c0)",
+        "section_bg": "linear-gradient(180deg,#f8fbfd,#eef4f8)",
+        "empty_bg": "linear-gradient(180deg,#f8fbfd,#eef4f8)",
+        "stripe": "#fafcfd",
+    }
+
+
 def format_html_table(df, title):
     title_html = html.escape(title)
+    theme = get_table_theme(title)
 
     if df is None or df.empty:
-        return f"<h3 style='margin-bottom:8px;color:#0b3d91;'>{title_html}</h3><p>No data available.</p>"
+        return f"""
+        <div style="
+            margin-bottom:20px;
+            border:1px solid {theme['border']};
+            border-left:6px solid {theme['accent']};
+            border-radius:10px;
+            background:{theme['empty_bg']};
+            font-family:Arial;
+            box-shadow:0 2px 8px rgba(0,0,0,0.05);
+            overflow:hidden;">
+            <div style="
+                background:{theme['header_bg']};
+                color:#ffffff;
+                padding:10px 14px;
+                font-size:15px;
+                font-weight:bold;">
+                {title_html}
+            </div>
+            <div style="padding:14px 16px;color:#546e7a;">
+                No data available.
+            </div>
+        </div>
+        """
 
     parts = [
-        f'<h3 style="margin-bottom:8px;color:#0b3d91;font-family:Arial;">{title_html}</h3>',
-        '<table border="1" cellpadding="6" cellspacing="0" '
-        'style="border-collapse:collapse; font-family:Arial; font-size:13px; margin-bottom:18px; width:100%;">',
-        '<tr style="background-color:#d9eaf7;">',
+        f"""
+        <div style="
+            margin-bottom:20px;
+            border:1px solid {theme['border']};
+            border-left:6px solid {theme['accent']};
+            border-radius:10px;
+            overflow:hidden;
+            background:{theme['section_bg']};
+            box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+            <div style="
+                background:{theme['header_bg']};
+                color:#ffffff;
+                padding:10px 14px;
+                font-family:Arial;
+                font-size:15px;
+                font-weight:bold;">
+                {title_html}
+            </div>
+            <table border="0" cellpadding="0" cellspacing="0"
+                style="border-collapse:collapse; font-family:Arial; font-size:13px; width:100%; background:#ffffff;">
+                <tr style="background:#eaf2fb;">
+        """
     ]
 
     for col in df.columns:
-        parts.append(f"<th style='padding:8px;text-align:center;'>{html.escape(str(col))}</th>")
+        parts.append(
+            f"<th style='padding:10px 8px;text-align:center;color:#263238;"
+            f"border-bottom:1px solid {theme['border']};border-right:1px solid #e6edf2;'>"
+            f"{html.escape(str(col))}</th>"
+        )
     parts.append("</tr>")
 
-    for _, row in df.iterrows():
-        parts.append("<tr>")
+    for idx, (_, row) in enumerate(df.iterrows()):
+        row_bg = "#ffffff" if idx % 2 == 0 else theme["stripe"]
+        parts.append(f"<tr style='background:{row_bg};'>")
         for col, val in row.items():
             cell = "" if pd.isna(val) else html.escape(str(val))
             style = get_cell_style(col, val)
-            parts.append(f"<td style='padding:6px;text-align:center;{style}'>{cell}</td>")
+            parts.append(
+                f"<td style='padding:8px 6px;text-align:center;border-bottom:1px solid #edf2f7;"
+                f"border-right:1px solid #f1f4f7;{style}'>{cell}</td>"
+            )
         parts.append("</tr>")
 
-    parts.append("</table>")
+    parts.append("</table></div>")
     return "".join(parts)
 
 
@@ -293,8 +401,8 @@ def build_summary_box(tp_df, sm_df, movers_df, vol_df, setup_df, title="Market S
       <p style="margin:6px 0;"><b>{html.escape(top_pick_label)}:</b> {html.escape(str(top_pick))}</p>
       <p style="margin:6px 0;"><b>Best Trade Setup:</b> {html.escape(str(best_setup))}</p>
       <p style="margin:6px 0;"><b>Best Smart Money Stock:</b> {html.escape(str(smart_money))}</p>
-      <p style="margin:6px 0;"><b>Highest 7D Mover:</b> {html.escape(str(highest_mover))}</p>
-      <p style="margin:6px 0;"><b>Most Volatile 7D Stock:</b> {html.escape(str(most_volatile))}</p>
+      <p style="margin:6px 0;"><b>Highest Mover:</b> {html.escape(str(highest_mover))}</p>
+      <p style="margin:6px 0;"><b>Most Volatile Stock:</b> {html.escape(str(most_volatile))}</p>
     </div>
     """
 
@@ -501,8 +609,28 @@ def build_email_body(report_path):
         ("change_pct", "Change %"),
     ]
 
-    movers = prepare_table(
+    movers1 = prepare_table(
+        filter_window(price_movers, "1D"),
+        movers_map,
+        round_cols=["Start Price", "Last Price"],
+        percent_cols=["Change %"],
+        sort_by="change_pct",
+        ascending=False,
+        limit=10,
+    )
+
+    movers7 = prepare_table(
         filter_window(price_movers, "7D"),
+        movers_map,
+        round_cols=["Start Price", "Last Price"],
+        percent_cols=["Change %"],
+        sort_by="change_pct",
+        ascending=False,
+        limit=10,
+    )
+
+    movers15 = prepare_table(
+        filter_window(price_movers, "15D"),
         movers_map,
         round_cols=["Start Price", "Last Price"],
         percent_cols=["Change %"],
@@ -519,8 +647,28 @@ def build_email_body(report_path):
         ("vol_surge", "Volume Surge"),
     ]
 
-    vol = prepare_table(
+    vol1 = prepare_table(
+        filter_window(symbol_summary, "1D"),
+        vol_map,
+        round_cols=["Last Price", "Range %", "Volume Surge"],
+        percent_cols=["Range %"],
+        sort_by="range_pct",
+        ascending=False,
+        limit=10,
+    )
+
+    vol7 = prepare_table(
         filter_window(symbol_summary, "7D"),
+        vol_map,
+        round_cols=["Last Price", "Range %", "Volume Surge"],
+        percent_cols=["Range %"],
+        sort_by="range_pct",
+        ascending=False,
+        limit=10,
+    )
+
+    vol15 = prepare_table(
+        filter_window(symbol_summary, "15D"),
         vol_map,
         round_cols=["Last Price", "Range %", "Volume Surge"],
         percent_cols=["Range %"],
@@ -608,19 +756,19 @@ def build_email_body(report_path):
     """
 
     summary_box_1d = build_summary_box(
-        tp1, sm1, movers, vol, setups,
+        tp1, sm1, movers1, vol1, setups,
         title="Market Snapshot (1D)",
         top_pick_label="Top Pick Today"
     )
 
     summary_box_7d = build_summary_box(
-        tp7, sm7, movers, vol, setups,
+        tp7, sm7, movers7, vol7, setups,
         title="Market Snapshot (7D)",
         top_pick_label="Top Pick 7D"
     )
 
     summary_box_15d = build_summary_box(
-        tp15, sm15, movers, vol, setups,
+        tp15, sm15, movers15, vol15, setups,
         title="Market Snapshot (15D)",
         top_pick_label="Top Pick 15D"
     )
@@ -661,8 +809,8 @@ def build_email_body(report_path):
     {format_html_table(sm15, "Best Smart Money Stocks (15D)")}
     {format_html_table(swing, "Best Swing Trading Stocks (7D)")}
     {format_html_table(setups, "Best Trade Setups (7D)")}
-    {format_html_table(movers, "Highest Movement Stocks (7D)")}
-    {format_html_table(vol, "Most Volatile Stocks (7D)")}
+    {format_html_table(movers7, "Highest Movement Stocks (7D)")}
+    {format_html_table(vol7, "Most Volatile Stocks (7D)")}
     {format_html_table(sectors, "Top Performing Sectors (7D)")}
     {format_html_table(operator_warn, "Operator Activity Warning (7D)")}
 
