@@ -674,7 +674,7 @@ def build_email_body(report_path):
         percent_cols=["Range %"],
         sort_by="range_pct",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     setup_map = [
@@ -737,7 +737,7 @@ def build_email_body(report_path):
         percent_cols=["Concentration %"],
         sort_by="operator_score",
         ascending=False,
-        limit=10,
+        limit=20,
     )
 
     header_html = f"""
