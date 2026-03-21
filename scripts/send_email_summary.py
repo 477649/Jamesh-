@@ -557,7 +557,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="quantity",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     tp7 = prepare_table(
@@ -566,7 +566,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="quantity",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     tp15 = prepare_table(
@@ -598,7 +598,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     movers_map = [
