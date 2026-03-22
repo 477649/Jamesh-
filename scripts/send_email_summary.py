@@ -716,7 +716,7 @@ def build_email_body(report_path):
         scale_100_cols=["Avg Momentum"],
         sort_by="avg_score",
         ascending=False,
-        limit=15,
+        limit=10,
     )
 
     operator_map = [
