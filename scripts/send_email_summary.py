@@ -515,7 +515,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     sm7 = prepare_table(
@@ -526,7 +526,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     sm15 = prepare_table(
@@ -537,7 +537,7 @@ def build_email_body(report_path):
         scale_100_cols=["Momentum"],
         sort_by="smart_money_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     top_picks_map = [
@@ -575,7 +575,7 @@ def build_email_body(report_path):
         round_cols=["Last Price", "VWAP", "Score"],
         sort_by="quantity",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     swing_map = [
@@ -616,7 +616,7 @@ def build_email_body(report_path):
         percent_cols=["Change %"],
         sort_by="change_pct",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     movers7 = prepare_table(
@@ -626,7 +626,7 @@ def build_email_body(report_path):
         percent_cols=["Change %"],
         sort_by="change_pct",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     movers15 = prepare_table(
@@ -654,7 +654,7 @@ def build_email_body(report_path):
         percent_cols=["Range %"],
         sort_by="range_pct",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     vol7 = prepare_table(
@@ -664,7 +664,7 @@ def build_email_body(report_path):
         percent_cols=["Range %"],
         sort_by="range_pct",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     vol15 = prepare_table(
@@ -716,7 +716,7 @@ def build_email_body(report_path):
         scale_100_cols=["Avg Momentum"],
         sort_by="avg_score",
         ascending=False,
-        limit=10,
+        limit=15,
     )
 
     operator_map = [
