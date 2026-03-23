@@ -815,7 +815,7 @@ def build_email_body(report_path):
     {format_html_table(operator_warn, "Operator Activity Warning (15D)")}
 
     <br>
-    <p>Regards,<br><b>Trading Report Bot</b></p>
+    <p>,<br><b></b></p>
 
     </body>
     </html>
@@ -844,7 +844,7 @@ Included Reports:
 17. Operator Activity Warning (15D)
 
 Regards,
-Trading Report Bot
+
 """
 
     return html_body, plain_text, report_date
