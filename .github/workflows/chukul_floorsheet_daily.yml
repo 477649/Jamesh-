@@ -4,14 +4,13 @@ on:
   schedule:
     # 03:30 PM Nepal Time (UTC +5:45)
     # 15:30 NPT = 09:45 UTC
-    # ✅ Run Sunday–Thursday ONLY (skip Friday & Saturday)
+    # Run Sunday-Thursday only
     - cron: "45 9 * * 0-4"
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# ✅ Prevent multiple workflow runs from pushing at the same time
 concurrency:
   group: daily-floorsheet
   cancel-in-progress: false
@@ -24,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # ✅ important for pull/rebase to work properly
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -36,33 +35,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ NEW (recommended): Ensure Chrome exists on runner for Selenium
       - name: Install Google Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-      # 1️⃣ Floorsheet first
       - name: Run floorsheet scraper
         run: |
           python scrape_chukul_floorsheet.py
 
-      # 2️⃣ ShareSansar today share price
       - name: Run ShareSansar today share price scraper
         run: |
           python scripts/sharesansar_today_share_price.py
 
-      # 3️⃣ Market overview report
       - name: Generate Market Overview Report
         run: |
           python scripts/generate_market_report.py
 
-      # 4️⃣ PriceAction early accumulation / distribution signals
       - name: Generate PriceAction Signals
         run: |
           python priceaction_signals.py
 
-      # 5️⃣ Send email summary
       - name: Send email summary
         run: |
           python scripts/send_email_summary.py
@@ -71,18 +64,14 @@ jobs:
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
 
-      # 6️⃣ Commit and push all daily outputs
       - name: Commit and push daily output
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add floorsheet + sharesansar + reports + Floor Sheet CSV folder + PriceAction
           git add outputs/*.xlsx outputs/reports/*.xlsx outputs/sharesansar/*.csv "outputs/Floor Sheet/*.csv" outputs/PriceAction/*.xlsx || true
 
-          # Commit if there are changes
           git commit -m "Daily floorsheet + market overview + price action report (3:30 PM NPT)" || echo "No changes to commit"
 
-          # ✅ Fix push rejection: sync with remote then push
           git pull --rebase origin main
           git push origin main
