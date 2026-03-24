@@ -1,32 +1,31 @@
-# floor_ohlc_insight_report.py
+# priceaction_signals.py
 # ------------------------------------------------------------
-# 15D Floor Sheet + OHLC Insight Report
+# OHLCV + Floor Sheet Price Action Report
 #
-# Uses the SAME source structure from your generate_trading_report.py:
+# Uses repo structure:
 # - outputs/Floor Sheet/floorsheet_YYYY-MM-DD.csv
 # - outputs/sharesansar/SharePrice_YYYY-MM-DD.csv
 # - outputs/Sector/sector_master.csv
 #
-# Goal:
-# - capture detailed insight from floor sheet + OHLC
-# - classify Best Buy / Buy / Hold / Sell
-# - generate entry / stop loss / target
-# - show broker accumulation / distribution
+# Output:
+# - outputs/PriceAction/nepse_signals_<latest_date>.xlsx
 #
 # Sheets:
-# - README
-# - Detailed_Insights
+# - Signals_5D
+# - Signals_10D
+# - Signals_15D
 # - Best_Buy
 # - Buy_Setups
 # - Hold_List
 # - Sell_List
 # - Broker_Accumulation
 # - Broker_Distribution
+# - Sentiment_Top
 # ------------------------------------------------------------
 
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import date as _date
 
 import numpy as np
 import pandas as pd
@@ -40,29 +39,41 @@ from openpyxl.utils import get_column_letter
 
 
 # =========================
-# CONFIG
+# PATHS / SETTINGS
 # =========================
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 
-FLOOR_DIR = ROOT / "outputs" / "Floor Sheet"
 PRICE_DIR = ROOT / "outputs" / "sharesansar"
-SECTOR_PATH = ROOT / "outputs" / "Sector" / "sector_master.csv"
-
-OUT_DIR = ROOT / "outputs" / "reports"
+FLOOR_DIR = ROOT / "outputs" / "Floor Sheet"
+SECTOR_FILE = ROOT / "outputs" / "Sector" / "sector_master.csv"
+OUT_DIR = ROOT / "outputs" / "PriceAction"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+PRICE_RE = re.compile(r"SharePrice_(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
 FLOOR_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
-PRICE_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 
-LOOKBACK_DAYS = 15
-MIN_PRICE_HISTORY = 20
+LOOKBACK_SIGNAL = 15
+PRICE_HISTORY_LOAD = 40
+TOP_BROKER_N = 8
 CRORE = 10_000_000
 
-BEST_BUY_MIN_SCORE = 78
-BUY_MIN_SCORE = 63
-HOLD_MIN_SCORE = 45
+BEST_BUY_MIN = 78
+BUY_MIN = 63
+HOLD_MIN = 45
 
-TOP_BROKER_N = 8
+SENTIMENT_TOP_N_EACH = 25
+
+# sentiment thresholds
+SENT_ACC_TH = 60
+SENT_DIST_TH = 60
+SENT_SHAKE_TH = 70
+
+ACC_WIN = 4
+ACC_MIN_HITS = 3
+DIST_WIN = 4
+DIST_MIN_HITS = 2
+SHAKE_WIN = 3
+SHAKE_MIN_HITS = 1
 
 
 # =========================
@@ -80,44 +91,50 @@ def safe_float(v):
         return np.nan
 
 
-def list_dates_from_folder(folder: Path, regex: re.Pattern):
-    dates, files = [], []
+def extract_date_from_name(path: Path, regex: re.Pattern):
+    m = regex.search(path.name)
+    if not m:
+        return None
+    try:
+        return pd.to_datetime(m.group(1)).date()
+    except Exception:
+        return None
+
+
+def list_dated_files(folder: Path, regex: re.Pattern):
     if not folder.exists():
-        return dates, files
-
-    for p in folder.glob("*.csv"):
-        m = regex.match(p.name)
-        if not m:
-            continue
-        try:
-            d = pd.to_datetime(m.group(1)).date()
-        except Exception:
-            continue
-        dates.append(d)
-        files.append(p)
-
-    pairs = sorted(zip(dates, files), key=lambda x: x[0])
-    return [d for d, _ in pairs], [f for _, f in pairs]
-
-
-def choose_window_dates(all_dates_sorted, n):
-    if not all_dates_sorted:
         return []
-    return all_dates_sorted[-min(n, len(all_dates_sorted)) :]
+    out = []
+    for p in sorted(folder.glob("*.csv")):
+        d = extract_date_from_name(p, regex)
+        if d is not None:
+            out.append((d, p))
+    return sorted(out, key=lambda x: x[0])
 
 
-def zscore(s: pd.Series):
-    s = pd.to_numeric(s, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    std = s.std(ddof=0)
-    if std == 0 or np.isnan(std):
-        return pd.Series(np.zeros(len(s)), index=s.index)
-    return (s - s.mean()) / (std + 1e-9)
+def choose_last_n_dates(dates_sorted, n):
+    if not dates_sorted:
+        return []
+    return dates_sorted[-min(n, len(dates_sorted)) :]
 
 
-def rsi(close: pd.Series, n=14):
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta.clip(upper=0)).clip(lower=0)
+def zscore(s, n=None):
+    s = pd.to_numeric(s, errors="coerce")
+    if n is None:
+        std = s.std(ddof=0)
+        if std == 0 or pd.isna(std):
+            return pd.Series(np.zeros(len(s)), index=s.index)
+        return (s - s.mean()) / (std + 1e-12)
+
+    mu = s.rolling(n).mean()
+    sd = s.rolling(n).std(ddof=0)
+    return (s - mu) / (sd + 1e-12)
+
+
+def rsi(close, n=14):
+    d = close.diff()
+    gain = d.clip(lower=0)
+    loss = (-d.clip(upper=0)).clip(lower=0)
     avg_gain = gain.rolling(n).mean()
     avg_loss = loss.rolling(n).mean()
     rs = avg_gain / (avg_loss + 1e-12)
@@ -134,7 +151,7 @@ def true_range(h, l, c):
 # =========================
 def load_sector_master(path: Path):
     if not path.exists():
-        return pd.DataFrame(columns=["Symbol", "Company", "Sector"])
+        return pd.DataFrame(columns=["Symbol", "Sector", "Company"])
 
     df = pd.read_csv(path)
     df.columns = [c.strip() for c in df.columns]
@@ -142,43 +159,15 @@ def load_sector_master(path: Path):
     if "Sector" not in df.columns and "Sectors" in df.columns:
         df = df.rename(columns={"Sectors": "Sector"})
 
-    for c in ["Symbol", "Company", "Sector"]:
+    if "Company" not in df.columns and "Company Name" in df.columns:
+        df = df.rename(columns={"Company Name": "Company"})
+
+    for c in ["Symbol", "Sector", "Company"]:
         if c not in df.columns:
             df[c] = ""
 
     df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
-    return df[["Symbol", "Company", "Sector"]].drop_duplicates(subset=["Symbol"])
-
-
-def read_floorsheet_file(path: Path, trade_date):
-    df = pd.read_csv(path)
-    df.columns = [c.strip() for c in df.columns]
-
-    rename_map = {
-        "Transact No": "Transact No.",
-        "Transact No.": "Transact No.",
-        "Transaction No.": "Transact No.",
-        "Qty": "Quantity",
-        "QTY": "Quantity",
-        "Amt": "Amount",
-    }
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-
-    needed = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
-    missing = [c for c in needed if c not in df.columns]
-    if missing:
-        raise ValueError(f"Floorsheet missing columns {missing} in {path.name}")
-
-    df["TradeDate"] = pd.to_datetime(trade_date)
-    df["Quantity"] = df["Quantity"].apply(safe_float).fillna(0).astype(float)
-    df["Rate"] = df["Rate"].apply(safe_float).fillna(0).astype(float)
-    df["Amount"] = df["Amount"].apply(safe_float).fillna(0).astype(float)
-
-    for c in ["Buyer", "Seller"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
-
-    df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
-    return df[needed + ["TradeDate"]]
+    return df[["Symbol", "Sector", "Company"]].drop_duplicates(subset=["Symbol"], keep="last")
 
 
 def read_price_file(path: Path, trade_date):
@@ -187,22 +176,60 @@ def read_price_file(path: Path, trade_date):
 
     if "Close" not in df.columns and "LTP" in df.columns:
         df["Close"] = df["LTP"]
-    if "Volume" not in df.columns and "Vol" in df.columns:
-        df["Volume"] = df["Vol"]
+
+    if "Volume" not in df.columns:
+        for c in ["Vol", "VOL", "Total Traded Quantity", "TotalQty", "Qty"]:
+            if c in df.columns:
+                df["Volume"] = df[c]
+                break
+
     if "VWAP" not in df.columns:
-        df["VWAP"] = np.nan
+        for c in ["vwap", "Vwap", "VWAP Price", "Daily VWAP", "AvgPrice", "Average Price"]:
+            if c in df.columns:
+                df["VWAP"] = df[c]
+                break
 
-    core = ["Symbol", "Open", "High", "Low", "Close", "Volume", "VWAP"]
-    missing = [c for c in core if c not in df.columns]
+    needed = ["Symbol", "Open", "High", "Low", "Close", "Volume", "VWAP"]
+    missing = [c for c in needed if c not in df.columns]
     if missing:
-        raise ValueError(f"Share price missing columns {missing} in {path.name}")
+        raise ValueError(f"SharePrice missing columns {missing} in {path.name}")
 
-    df["TradeDate"] = pd.to_datetime(trade_date)
     for c in ["Open", "High", "Low", "Close", "Volume", "VWAP"]:
         df[c] = df[c].apply(safe_float)
 
+    df["TradeDate"] = pd.to_datetime(trade_date)
     df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
     return df[["TradeDate", "Symbol", "Open", "High", "Low", "Close", "Volume", "VWAP"]]
+
+
+def read_floorsheet_file(path: Path, trade_date):
+    df = pd.read_csv(path)
+    df.columns = [c.strip() for c in df.columns]
+
+    ren = {
+        "Transact No": "Transact No.",
+        "Transact No.": "Transact No.",
+        "Transaction No.": "Transact No.",
+        "Qty": "Quantity",
+        "QTY": "Quantity",
+        "Amt": "Amount",
+    }
+    df = df.rename(columns={k: v for k, v in ren.items() if k in df.columns})
+
+    needed = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"Floorsheet missing columns {missing} in {path.name}")
+
+    df["TradeDate"] = pd.to_datetime(trade_date)
+    for c in ["Quantity", "Rate", "Amount"]:
+        df[c] = df[c].apply(safe_float).fillna(0.0)
+
+    for c in ["Buyer", "Seller"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
+
+    df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
+    return df[needed + ["TradeDate"]]
 
 
 # =========================
@@ -210,7 +237,9 @@ def read_price_file(path: Path, trade_date):
 # =========================
 def symbol_metrics_from_floorsheet(fs: pd.DataFrame):
     if fs.empty:
-        return pd.DataFrame(columns=["Symbol", "Trades", "Floor_Qty", "Floor_Amount", "Floor_VWAP", "Floor_Amount_Cr"])
+        return pd.DataFrame(columns=[
+            "Symbol", "Trades", "Floor_Qty", "Floor_Amount", "Floor_VWAP", "Floor_Amount_Cr"
+        ])
 
     x = fs.copy()
     x["_qxr"] = x["Quantity"] * x["Rate"]
@@ -228,7 +257,9 @@ def symbol_metrics_from_floorsheet(fs: pd.DataFrame):
 
 def broker_symbol_metrics(fs: pd.DataFrame):
     if fs.empty:
-        return pd.DataFrame(columns=["TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount"])
+        return pd.DataFrame(columns=[
+            "TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Buy_Day"
+        ])
 
     buy = fs[["TradeDate", "Symbol", "Buyer", "Quantity", "Rate"]].copy()
     buy = buy.rename(columns={"Buyer": "Broker"})
@@ -270,16 +301,14 @@ def compute_pressure(bs_window: pd.DataFrame, topn=5):
         t.sort_values(["Symbol", "pos"], ascending=[True, False])
         .groupby("Symbol")
         .head(topn)
-        .groupby("Symbol", as_index=False)["pos"]
-        .sum()
+        .groupby("Symbol", as_index=False)["pos"].sum()
         .rename(columns={"pos": "top_pos"})
     )
     top_neg = (
         t.sort_values(["Symbol", "neg_abs"], ascending=[True, False])
         .groupby("Symbol")
         .head(topn)
-        .groupby("Symbol", as_index=False)["neg_abs"]
-        .sum()
+        .groupby("Symbol", as_index=False)["neg_abs"].sum()
         .rename(columns={"neg_abs": "top_neg"})
     )
 
@@ -288,7 +317,6 @@ def compute_pressure(bs_window: pd.DataFrame, topn=5):
         .merge(neg_total, on="Symbol", how="left")
         .merge(top_neg, on="Symbol", how="left")
     )
-
     out["Buy_Pressure"] = np.where(out["pos_total"] > 0, out["top_pos"].fillna(0) / out["pos_total"], np.nan)
     out["Sell_Pressure"] = np.where(out["neg_total"] > 0, out["top_neg"].fillna(0) / out["neg_total"], np.nan)
     out["Net_Broker_Bias"] = out["pos_total"].fillna(0) - out["neg_total"].fillna(0)
@@ -297,8 +325,8 @@ def compute_pressure(bs_window: pd.DataFrame, topn=5):
 
 
 def top_broker_accumulation_distribution(bs_window: pd.DataFrame, topn=TOP_BROKER_N):
+    empty = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Days", "Side"])
     if bs_window.empty:
-        empty = pd.DataFrame(columns=["Symbol", "Broker", "Net_Qty", "Buy_Qty", "Sell_Qty", "Active_Days", "Side"])
         return empty.copy(), empty.copy()
 
     acc = (
@@ -316,116 +344,327 @@ def top_broker_accumulation_distribution(bs_window: pd.DataFrame, topn=TOP_BROKE
         .copy()
     )
     dist["Side"] = "DISTRIBUTION"
-
     return acc, dist
 
 
 # =========================
 # PRICE FEATURES
 # =========================
-def add_price_features(g: pd.DataFrame):
+def ema(s, n):
+    return s.ewm(span=n, adjust=False).mean()
+
+
+def add_price_features(g):
     g = g.sort_values("TradeDate").copy()
 
-    g["MA5"] = g["Close"].rolling(5).mean()
-    g["MA10"] = g["Close"].rolling(10).mean()
-    g["MA15"] = g["Close"].rolling(15).mean()
-    g["MA20"] = g["Close"].rolling(20).mean()
+    for n in [5, 7, 10, 15, 20, 30]:
+        g[f"MA{n}"] = g["Close"].rolling(n).mean()
+        g[f"VMA{n}"] = g["Volume"].rolling(n).mean()
 
-    g["VMA5"] = g["Volume"].rolling(5).mean()
-    g["VMA10"] = g["Volume"].rolling(10).mean()
-    g["VMA15"] = g["Volume"].rolling(15).mean()
-
-    g["HH5"] = g["High"].rolling(5).max()
-    g["HH10"] = g["High"].rolling(10).max()
-    g["HH15"] = g["High"].rolling(15).max()
-
-    g["LL5"] = g["Low"].rolling(5).min()
-    g["LL10"] = g["Low"].rolling(10).min()
-    g["LL15"] = g["Low"].rolling(15).min()
-
-    for n in [1, 3, 5, 10, 15]:
+    for n in [1, 2, 3, 5, 7, 10, 15, 20, 30]:
         g[f"RET{n}"] = g["Close"].pct_change(n) * 100
 
+    for n in [5, 10, 15, 20]:
+        g[f"HH{n}"] = g["High"].rolling(n).max()
+        g[f"LL{n}"] = g["Low"].rolling(n).min()
+
     rng = (g["High"] - g["Low"]).replace(0, np.nan)
-    g["Close_Pos"] = (g["Close"] - g["Low"]) / (rng + 1e-12)
-    g["Body_Pct"] = (g["Close"] - g["Open"]).abs() / (g["Open"] + 1e-12) * 100
     g["UpperWickPct"] = ((g["High"] - g[["Open", "Close"]].max(axis=1)) / (rng + 1e-12)).clip(0, 1)
     g["LowerWickPct"] = ((g[["Open", "Close"]].min(axis=1) - g["Low"]) / (rng + 1e-12)).clip(0, 1)
+    g["Close_Pos"] = (g["Close"] - g["Low"]) / (rng + 1e-12)
+    g["Body_Pct"] = (g["Close"] - g["Open"]).abs() / (g["Open"] + 1e-12) * 100
     g["RangePct"] = (rng / (g["Close"] + 1e-12)) * 100
 
     g["RSI14"] = rsi(g["Close"], 14)
     tr = true_range(g["High"], g["Low"], g["Close"])
     g["ATR14"] = tr.rolling(14).mean()
-    g["ATR14_Pct"] = g["ATR14"] / (g["Close"] + 1e-12) * 100
+    g["ATR14_Pct"] = (g["ATR14"] / (g["Close"] + 1e-12)) * 100
 
+    g["EMA10"] = ema(g["Close"], 10)
+    g["EMA20"] = ema(g["Close"], 20)
+    g["EMA50"] = ema(g["Close"], 50)
+
+    g["Vol_Surge"] = np.where(g["VMA10"] > 0, g["Volume"] / (g["VMA10"] + 1e-12), np.nan)
     g["Price_vs_VWAP_Pct"] = np.where(
         g["VWAP"].notna() & (g["VWAP"] > 0),
         (g["Close"] / g["VWAP"] - 1.0) * 100,
         np.nan,
     )
-    g["Vol_Surge"] = np.where(g["VMA10"] > 0, g["Volume"] / (g["VMA10"] + 1e-12), np.nan)
 
     return g
 
 
-def build_price_snapshot(price_all: pd.DataFrame):
-    rows = []
+# =========================
+# SENTIMENT DETECTOR
+# =========================
+def add_sentiment_detector(g):
+    g = g.copy()
 
+    rng = (g["High"] - g["Low"]).replace(0, np.nan)
+    body = (g["Close"] - g["Open"]).abs()
+    upper = (g["High"] - g[["Open", "Close"]].max(axis=1))
+    lower = (g[["Open", "Close"]].min(axis=1) - g["Low"])
+
+    g["BodyPct01"] = (body / (rng + 1e-12)).clip(0, 1)
+    g["LowerWickPct01"] = (lower / (rng + 1e-12)).clip(0, 1)
+    g["UpperWickPct01"] = (upper / (rng + 1e-12)).clip(0, 1)
+
+    g["RangePct_D"] = (rng / (g["Close"] + 1e-12)) * 100
+    g["RangePct_MA10"] = g["RangePct_D"].rolling(10).mean()
+
+    g["VolAvg5"] = g["Volume"].rolling(5).mean()
+    g["VolAvg20"] = g["Volume"].rolling(20).mean()
+    g["VolRatio20"] = g["Volume"] / (g["VolAvg20"] + 1e-12)
+
+    if "RET1" not in g.columns:
+        g["RET1"] = g["Close"].pct_change(1) * 100
+
+    g["HH20"] = g["High"].rolling(20).max()
+    near_hh20 = (g["Close"] >= 0.97 * g["HH20"]).fillna(False)
+
+    acc = np.zeros(len(g), dtype=float)
+    acc += 20 * ((g["VolAvg5"] > g["VolAvg20"]).fillna(False)).astype(int)
+    acc += 20 * ((g["RangePct_D"] <= (g["RangePct_MA10"] * 0.90)).fillna(False)).astype(int)
+    acc += 20 * ((g["BodyPct01"] < 0.40).fillna(False)).astype(int)
+    acc += 20 * ((g["Close"] > g["VWAP"]).fillna(False)).astype(int)
+    acc += 20 * ((g["LowerWickPct01"] > g["UpperWickPct01"]).fillna(False)).astype(int)
+    g["AccumulationScore"] = np.clip(acc, 0, 100).astype(int)
+
+    dist = np.zeros(len(g), dtype=float)
+    dist += 25 * ((g["VolRatio20"] >= 1.8).fillna(False)).astype(int)
+    dist += 25 * ((g["RET1"] <= 0.50).fillna(False)).astype(int)
+    dist += 20 * ((g["UpperWickPct01"] >= 0.45).fillna(False)).astype(int)
+    dist += 20 * ((g["Close"] < g["VWAP"]).fillna(False)).astype(int)
+    dist += 10 * near_hh20.astype(int)
+    g["DistributionScore"] = np.clip(dist, 0, 100).astype(int)
+
+    prev_low = g["Low"].shift(1)
+    shake = np.zeros(len(g), dtype=float)
+    shake += 50 * ((g["Low"] < prev_low) & (g["Close"] > prev_low)).fillna(False).astype(int)
+    shake += 30 * ((g["LowerWickPct01"] >= 0.50).fillna(False)).astype(int)
+    shake += 20 * ((g["VolRatio20"] >= 1.5).fillna(False)).astype(int)
+    g["ShakeoutScore"] = np.clip(shake, 0, 100).astype(int)
+
+    acc_hits = (g["AccumulationScore"] >= SENT_ACC_TH).rolling(ACC_WIN).sum()
+    dist_hits = (g["DistributionScore"] >= SENT_DIST_TH).rolling(DIST_WIN).sum()
+    shake_hits = (g["ShakeoutScore"] >= SENT_SHAKE_TH).rolling(SHAKE_WIN).sum()
+
+    g["AccHits4"] = acc_hits
+    g["DistHits4"] = dist_hits
+    g["ShakeHits3"] = shake_hits
+
+    g["AccConfirmed"] = (acc_hits >= ACC_MIN_HITS).fillna(False)
+    g["DistConfirmed"] = (dist_hits >= DIST_MIN_HITS).fillna(False)
+    g["ShakeConfirmed"] = (shake_hits >= SHAKE_MIN_HITS).fillna(False)
+
+    sig = np.array(["NEUTRAL"] * len(g), dtype=object)
+    sig[g["AccConfirmed"]] = "ACCUMULATION"
+    sig[g["ShakeConfirmed"]] = "SHAKEOUT"
+    sig[g["DistConfirmed"]] = "DISTRIBUTION"
+    g["SentimentSignal"] = sig
+
+    reasons = []
+    for i in range(len(g)):
+        r = []
+        if bool(g["AccConfirmed"].iloc[i]):
+            r.append(f"Acc≥{SENT_ACC_TH} on {int(g['AccHits4'].iloc[i])}/{ACC_WIN}")
+        if bool(g["ShakeConfirmed"].iloc[i]):
+            r.append(f"Shake≥{SENT_SHAKE_TH} on {int(g['ShakeHits3'].iloc[i])}/{SHAKE_WIN}")
+        if bool(g["DistConfirmed"].iloc[i]):
+            r.append(f"Dist≥{SENT_DIST_TH} on {int(g['DistHits4'].iloc[i])}/{DIST_WIN}")
+        reasons.append("; ".join(r) if r else "")
+    g["SentimentReason"] = reasons
+
+    return g
+
+
+# =========================
+# SNAPSHOT BUILDERS
+# =========================
+def build_symbol_snapshot(price_all: pd.DataFrame):
+    rows = []
     for sym, g in price_all.groupby("Symbol"):
         g = add_price_features(g)
-        if len(g) < MIN_PRICE_HISTORY:
+        g = add_sentiment_detector(g)
+        if len(g) < 20:
             continue
 
         last = g.iloc[-1]
-
         rows.append({
-            "Symbol": sym,
             "TradeDate": last["TradeDate"],
+            "Symbol": sym,
             "Open": last["Open"],
             "High": last["High"],
             "Low": last["Low"],
             "Close": last["Close"],
             "Volume": last["Volume"],
             "VWAP": last["VWAP"],
-            "MA5": last["MA5"],
-            "MA10": last["MA10"],
-            "MA15": last["MA15"],
-            "MA20": last["MA20"],
-            "HH5": last["HH5"],
-            "HH10": last["HH10"],
-            "HH15": last["HH15"],
-            "LL5": last["LL5"],
-            "LL10": last["LL10"],
-            "LL15": last["LL15"],
-            "RET1_%": last["RET1"],
-            "RET3_%": last["RET3"],
-            "RET5_%": last["RET5"],
-            "RET10_%": last["RET10"],
-            "RET15_%": last["RET15"],
-            "RSI14": last["RSI14"],
-            "ATR14": last["ATR14"],
-            "ATR14_Pct": last["ATR14_Pct"],
-            "RangePct": last["RangePct"],
-            "Body_Pct": last["Body_Pct"],
-            "Close_Pos": last["Close_Pos"],
-            "UpperWickPct": last["UpperWickPct"],
-            "LowerWickPct": last["LowerWickPct"],
-            "Price_vs_VWAP_Pct": last["Price_vs_VWAP_Pct"],
-            "Vol_Surge": last["Vol_Surge"],
-        })
 
+            "MA5": last["MA5"], "MA7": last["MA7"], "MA10": last["MA10"], "MA15": last["MA15"], "MA20": last["MA20"],
+            "HH5": last["HH5"], "HH10": last["HH10"], "HH15": last["HH15"], "LL5": last["LL5"], "LL10": last["LL10"], "LL15": last["LL15"],
+
+            "RET1_%": last["RET1"], "RET2_%": last["RET2"], "RET3_%": last["RET3"], "RET5_%": last["RET5"],
+            "RET7_%": last["RET7"], "RET10_%": last["RET10"], "RET15_%": last["RET15"], "RET20_%": last["RET20"],
+
+            "RSI14": last["RSI14"], "ATR14": last["ATR14"], "ATR14_Pct": last["ATR14_Pct"],
+            "RangePct": last["RangePct"], "Body_Pct": last["Body_Pct"], "Close_Pos": last["Close_Pos"],
+            "UpperWickPct": last["UpperWickPct"], "LowerWickPct": last["LowerWickPct"],
+            "Vol_Surge": last["Vol_Surge"], "Price_vs_VWAP_Pct": last["Price_vs_VWAP_Pct"],
+
+            "AccumulationScore": last["AccumulationScore"],
+            "DistributionScore": last["DistributionScore"],
+            "ShakeoutScore": last["ShakeoutScore"],
+            "AccHits4": last["AccHits4"],
+            "DistHits4": last["DistHits4"],
+            "ShakeHits3": last["ShakeHits3"],
+            "AccConfirmed": last["AccConfirmed"],
+            "DistConfirmed": last["DistConfirmed"],
+            "ShakeConfirmed": last["ShakeConfirmed"],
+            "SentimentSignal": last["SentimentSignal"],
+            "SentimentReason": last["SentimentReason"],
+        })
     return pd.DataFrame(rows)
 
 
 # =========================
-# SCORING LOGIC
+# WINDOW SCORING
 # =========================
-def build_insight_table(price_snapshot, floor_symbol, pressure, bs_window, sector):
-    if price_snapshot.empty:
-        return pd.DataFrame()
+def score_window(x: pd.DataFrame, window_name: str):
+    x = x.copy()
 
-    x = price_snapshot.copy()
+    if window_name == "5D":
+        trend_score = (
+            (x["Close"] > x["MA5"]).astype(int) * 12 +
+            (x["MA5"] > x["MA10"]).astype(int) * 16 +
+            (x["Close"] >= 0.98 * x["HH5"]).astype(int) * 12 +
+            (x["RSI14"].between(50, 72, inclusive="both")).astype(int) * 8
+        )
+    elif window_name == "10D":
+        trend_score = (
+            (x["Close"] > x["MA5"]).astype(int) * 8 +
+            (x["MA5"] > x["MA10"]).astype(int) * 14 +
+            (x["MA10"] > x["MA15"]).astype(int) * 12 +
+            (x["Close"] >= 0.98 * x["HH10"]).astype(int) * 10 +
+            (x["RSI14"].between(52, 72, inclusive="both")).astype(int) * 8
+        )
+    else:  # 15D
+        trend_score = (
+            (x["Close"] > x["MA10"]).astype(int) * 8 +
+            (x["MA10"] > x["MA15"]).astype(int) * 14 +
+            (x["MA15"] > x["MA20"]).astype(int) * 12 +
+            (x["Close"] >= 0.97 * x["HH15"]).astype(int) * 10 +
+            (x["RSI14"].between(52, 72, inclusive="both")).astype(int) * 8
+        )
 
+    candle_score = (
+        (x["Close_Pos"] >= 0.65).astype(int) * 8 +
+        (x["UpperWickPct"] <= 0.30).astype(int) * 6 +
+        (x["LowerWickPct"] >= x["UpperWickPct"]).astype(int) * 4
+    )
+
+    volume_score = (
+        (x["Vol_Surge"] >= 1.20).astype(int) * 8 +
+        (x["Vol_Surge"] >= 1.50).astype(int) * 7 +
+        (x["Trades"] >= 80).astype(int) * 5 +
+        (x["Floor_Amount_Cr"] >= 1.0).astype(int) * 5
+    )
+
+    floor_score = (
+        (x["Buy_Pressure"] > x["Sell_Pressure"]).astype(int) * 10 +
+        (x["Buy_Pressure"] >= 0.55).astype(int) * 10 +
+        (x["Broker_Balance"] > 0).astype(int) * 6 +
+        (x["Accum_Brokers"] >= x["Dist_Brokers"]).astype(int) * 6 +
+        (x["Close"] >= x["VWAP"]).astype(int) * 6 +
+        (x["Close"] >= x["Floor_VWAP"]).astype(int) * 6
+    )
+
+    sentiment_bonus = (
+        (x["SentimentSignal"] == "ACCUMULATION").astype(int) * 8 +
+        (x["SentimentSignal"] == "SHAKEOUT").astype(int) * 5 -
+        (x["SentimentSignal"] == "DISTRIBUTION").astype(int) * 10
+    )
+
+    risk_penalty = (
+        (x["Sell_Pressure"] >= 0.55).astype(int) * 14 +
+        (x["Close"] < x["VWAP"]).astype(int) * 10 +
+        (x["RSI14"] < 45).astype(int) * 8 +
+        (x["UpperWickPct"] >= 0.45).astype(int) * 6 +
+        (x["Close_Pos"] <= 0.35).astype(int) * 5 +
+        (x["DistributionScore"] >= 70).astype(int) * 8
+    )
+
+    raw = trend_score + candle_score + volume_score + floor_score + sentiment_bonus - risk_penalty
+
+    mn, mx = float(raw.min()), float(raw.max())
+    x[f"Score_{window_name}"] = np.where(mx > mn, 100 * (raw - mn) / (mx - mn), 50.0)
+
+    signal = np.array(["SELL"] * len(x), dtype=object)
+    signal[x[f"Score_{window_name}"] >= HOLD_MIN] = "HOLD"
+    signal[x[f"Score_{window_name}"] >= BUY_MIN] = "BUY"
+    signal[x[f"Score_{window_name}"] >= BEST_BUY_MIN] = "BEST BUY"
+    x[f"Signal_{window_name}"] = signal
+
+    return x
+
+
+def build_reason_row(r, window_name):
+    parts = []
+
+    if r.get("Buy_Pressure", np.nan) > r.get("Sell_Pressure", np.nan):
+        parts.append("buyer pressure")
+    elif r.get("Sell_Pressure", np.nan) > r.get("Buy_Pressure", np.nan):
+        parts.append("seller pressure")
+
+    if pd.notna(r.get("Close")) and pd.notna(r.get("VWAP")):
+        parts.append("above VWAP" if r["Close"] >= r["VWAP"] else "below VWAP")
+
+    if pd.notna(r.get("Floor_VWAP")) and pd.notna(r.get("Close")) and r["Close"] >= r["Floor_VWAP"]:
+        parts.append("above floor VWAP")
+
+    if pd.notna(r.get("Vol_Surge")) and r["Vol_Surge"] >= 1.5:
+        parts.append("volume surge")
+
+    if pd.notna(r.get("RSI14")):
+        if 52 <= r["RSI14"] <= 72:
+            parts.append("healthy RSI")
+        elif r["RSI14"] < 45:
+            parts.append("weak RSI")
+
+    if window_name == "5D" and pd.notna(r.get("HH5")) and r["Close"] >= 0.98 * r["HH5"]:
+        parts.append("near 5D breakout")
+    if window_name == "10D" and pd.notna(r.get("HH10")) and r["Close"] >= 0.98 * r["HH10"]:
+        parts.append("near 10D breakout")
+    if window_name == "15D" and pd.notna(r.get("HH15")) and r["Close"] >= 0.97 * r["HH15"]:
+        parts.append("near 15D breakout")
+
+    if r.get("Accum_Brokers", 0) > r.get("Dist_Brokers", 0):
+        parts.append("broker accumulation")
+    elif r.get("Dist_Brokers", 0) > r.get("Accum_Brokers", 0):
+        parts.append("broker distribution")
+
+    if r.get("SentimentSignal") == "ACCUMULATION":
+        parts.append("sentiment accumulation")
+    elif r.get("SentimentSignal") == "DISTRIBUTION":
+        parts.append("sentiment distribution")
+
+    if pd.notna(r.get("UpperWickPct")) and r["UpperWickPct"] >= 0.45:
+        parts.append("upper-wick risk")
+
+    return ", ".join(parts[:7])
+
+
+def build_action_plan(signal):
+    if signal == "BEST BUY":
+        return "Fresh opportunity; entry near current price or slight dip; trail below stop."
+    if signal == "BUY":
+        return "Buy on confirmation; avoid chasing extended candle."
+    if signal == "HOLD":
+        return "Hold if above VWAP/short MA; wait for stronger follow-through."
+    return "Reduce or avoid; price-floor alignment is weak."
+
+
+def build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, window_name):
+    x = snapshot.copy()
     x = x.merge(floor_symbol, on="Symbol", how="left")
     x = x.merge(pressure, on="Symbol", how="left")
     x = x.merge(sector, on="Symbol", how="left")
@@ -451,57 +690,11 @@ def build_insight_table(price_snapshot, floor_symbol, pressure, bs_window, secto
 
     x["Broker_Balance"] = x["Accum_Brokers"].fillna(0) - x["Dist_Brokers"].fillna(0)
 
-    # Sub-scores
-    x["PriceScore"] = (
-        (x["Close"] > x["MA5"]).astype(int) * 8
-        + (x["MA5"] > x["MA10"]).astype(int) * 12
-        + (x["MA10"] > x["MA15"]).astype(int) * 12
-        + (x["Close"] >= 0.98 * x["HH10"]).astype(int) * 8
-        + (x["Close"] >= 0.97 * x["HH15"]).astype(int) * 8
-        + (x["RSI14"].between(52, 72, inclusive="both")).astype(int) * 8
-        + (x["Close_Pos"] >= 0.65).astype(int) * 6
-        + (x["UpperWickPct"] <= 0.30).astype(int) * 4
-        + (x["LowerWickPct"] >= x["UpperWickPct"]).astype(int) * 4
-    ).clip(0, 70)
+    x = score_window(x, window_name)
+    score_col = f"Score_{window_name}"
+    signal_col = f"Signal_{window_name}"
 
-    x["VolumeScore"] = (
-        (x["Vol_Surge"] >= 1.20).astype(int) * 8
-        + (x["Vol_Surge"] >= 1.50).astype(int) * 7
-        + (x["Floor_Amount_Cr"] >= 1.0).astype(int) * 5
-        + (x["Trades"] >= 80).astype(int) * 5
-    ).clip(0, 25)
-
-    x["FloorScore"] = (
-        (x["Buy_Pressure"] > x["Sell_Pressure"]).astype(int) * 10
-        + (x["Buy_Pressure"] >= 0.55).astype(int) * 10
-        + (x["Broker_Balance"] > 0).astype(int) * 6
-        + (x["Accum_Brokers"] >= x["Dist_Brokers"]).astype(int) * 6
-        + (x["Close"] >= x["Floor_VWAP"]).astype(int) * 8
-    ).clip(0, 40)
-
-    x["RiskPenalty"] = (
-        (x["Sell_Pressure"] >= 0.55).astype(int) * 14
-        + (x["Close"] < x["VWAP"]).astype(int) * 10
-        + (x["Close"] < x["MA10"]).astype(int) * 10
-        + (x["RSI14"] < 45).astype(int) * 8
-        + (x["UpperWickPct"] >= 0.45).astype(int) * 5
-        + (x["Close_Pos"] <= 0.35).astype(int) * 5
-        + (x["RET5_%"] <= -4).astype(int) * 8
-    ).clip(0, 50)
-
-    raw = x["PriceScore"] + x["VolumeScore"] + x["FloorScore"] - x["RiskPenalty"]
-    mn, mx = float(raw.min()), float(raw.max())
-    x["InsightScore"] = np.where(mx > mn, 100 * (raw - mn) / (mx - mn), 50.0)
-
-    # Recommendation
-    x["Recommendation"] = "SELL"
-    x.loc[x["InsightScore"] >= HOLD_MIN_SCORE, "Recommendation"] = "HOLD"
-    x.loc[x["InsightScore"] >= BUY_MIN_SCORE, "Recommendation"] = "BUY"
-    x.loc[x["InsightScore"] >= BEST_BUY_MIN_SCORE, "Recommendation"] = "BEST BUY"
-
-    # Trade plan
     x["Entry"] = x["Close"].round(2)
-
     stop_base_1 = x["LL5"]
     stop_base_2 = x["Close"] - 1.2 * x["ATR14"]
     x["StopLoss"] = np.where(
@@ -509,91 +702,80 @@ def build_insight_table(price_snapshot, floor_symbol, pressure, bs_window, secto
         np.minimum(stop_base_1, stop_base_2),
         np.where(stop_base_1.notna(), stop_base_1, stop_base_2),
     )
-
     x["RiskPerShare"] = (x["Entry"] - x["StopLoss"]).clip(lower=0)
     x["Target1"] = (x["Entry"] + 1.5 * x["RiskPerShare"]).round(2)
     x["Target2"] = (x["Entry"] + 2.5 * x["RiskPerShare"]).round(2)
     x["Target3"] = (x["Entry"] + 3.0 * x["RiskPerShare"]).round(2)
 
-    # Hold / Sell action text
-    x["ActionPlan"] = ""
-    x.loc[x["Recommendation"] == "BEST BUY", "ActionPlan"] = "Fresh opportunity; entry near current price / slight dip; trail below stop."
-    x.loc[x["Recommendation"] == "BUY", "ActionPlan"] = "Buy on confirmation; avoid chasing extended candle."
-    x.loc[x["Recommendation"] == "HOLD", "ActionPlan"] = "Hold if above VWAP / MA10; wait for better follow-through."
-    x.loc[x["Recommendation"] == "SELL", "ActionPlan"] = "Reduce / avoid; weak price-floor alignment."
-
-    # Reasons
-    reasons = []
-    for _, r in x.iterrows():
-        tags = []
-
-        if pd.notna(r["Buy_Pressure"]) and pd.notna(r["Sell_Pressure"]):
-            if r["Buy_Pressure"] > r["Sell_Pressure"]:
-                tags.append("buyer pressure")
-            elif r["Sell_Pressure"] > r["Buy_Pressure"]:
-                tags.append("seller pressure")
-
-        if pd.notna(r["Close"]) and pd.notna(r["VWAP"]):
-            if r["Close"] > r["VWAP"]:
-                tags.append("above VWAP")
-            else:
-                tags.append("below VWAP")
-
-        if pd.notna(r["Vol_Surge"]) and r["Vol_Surge"] >= 1.5:
-            tags.append("volume surge")
-
-        if pd.notna(r["RSI14"]):
-            if 52 <= r["RSI14"] <= 72:
-                tags.append("healthy RSI")
-            elif r["RSI14"] < 45:
-                tags.append("weak RSI")
-
-        if pd.notna(r["Close"]) and pd.notna(r["HH10"]) and r["Close"] >= 0.98 * r["HH10"]:
-            tags.append("near 10D breakout")
-
-        if pd.notna(r["Accum_Brokers"]) and pd.notna(r["Dist_Brokers"]):
-            if r["Accum_Brokers"] > r["Dist_Brokers"]:
-                tags.append("broker accumulation")
-            elif r["Dist_Brokers"] > r["Accum_Brokers"]:
-                tags.append("broker distribution")
-
-        if pd.notna(r["UpperWickPct"]) and r["UpperWickPct"] >= 0.45:
-            tags.append("upper-wick risk")
-
-        reasons.append(", ".join(tags[:6]))
-
-    x["InsightReason"] = reasons
-
-    # Risk flags
     x["RiskFlags"] = ""
     x.loc[x["Sell_Pressure"].fillna(0) >= 0.55, "RiskFlags"] += "SellWall; "
     x.loc[x["Close_Pos"].fillna(0.5) <= 0.35, "RiskFlags"] += "WeakClose; "
     x.loc[x["UpperWickPct"].fillna(0) >= 0.45, "RiskFlags"] += "SupplyWick; "
     x.loc[x["Close"].fillna(0) < x["VWAP"].fillna(np.inf), "RiskFlags"] += "BelowVWAP; "
-    x.loc[x["RET5_%"].fillna(0) <= -4, "RiskFlags"] += "ShortTermWeakness; "
+    x.loc[x["DistributionScore"].fillna(0) >= 70, "RiskFlags"] += "Distribution; "
 
-    # Final order
-    cols = [
-        "TradeDate", "Symbol", "Company", "Sector",
-        "Recommendation", "InsightScore",
+    x["InsightReason"] = x.apply(lambda r: build_reason_row(r, window_name), axis=1)
+    x["ActionPlan"] = x[signal_col].apply(build_action_plan)
+
+    out_cols = [
+        "TradeDate", "Symbol", "Sector", "Company",
+        signal_col, score_col,
         "Entry", "StopLoss", "Target1", "Target2", "Target3",
         "Close", "VWAP", "Floor_VWAP",
-        "RET1_%", "RET3_%", "RET5_%", "RET10_%", "RET15_%",
-        "MA5", "MA10", "MA15",
-        "HH10", "HH15", "LL5", "LL10",
-        "Volume", "Vol_Surge", "Floor_Qty", "Floor_Amount_Cr", "Trades",
+        "RET1_%", "RET3_%", "RET5_%", "RET7_%", "RET10_%", "RET15_%",
+        "MA5", "MA7", "MA10", "MA15", "MA20",
+        "HH5", "HH10", "HH15", "LL5", "LL10", "LL15",
+        "Volume", "Vol_Surge", "Trades", "Floor_Qty", "Floor_Amount_Cr",
         "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias",
         "Accum_Brokers", "Dist_Brokers", "Active_Brokers",
         "RSI14", "ATR14", "ATR14_Pct", "RangePct", "Body_Pct", "Close_Pos",
-        "Price_vs_VWAP_Pct",
-        "PriceScore", "VolumeScore", "FloorScore", "RiskPenalty",
-        "InsightReason", "RiskFlags", "ActionPlan",
+        "UpperWickPct", "LowerWickPct", "Price_vs_VWAP_Pct",
+        "AccumulationScore", "DistributionScore", "ShakeoutScore",
+        "AccHits4", "DistHits4", "ShakeHits3",
+        "AccConfirmed", "DistConfirmed", "ShakeConfirmed",
+        "SentimentSignal", "SentimentReason",
+        "InsightReason", "RiskFlags", "ActionPlan"
     ]
-    cols = [c for c in cols if c in x.columns]
-
-    x = x[cols].copy()
-    x = x.sort_values(["InsightScore", "Buy_Pressure", "RET10_%"], ascending=[False, False, False])
+    out_cols = [c for c in out_cols if c in x.columns]
+    x = x[out_cols].sort_values([score_col, "Buy_Pressure", "RET10_%"], ascending=[False, False, False])
     return x
+
+
+def build_sentiment_top(sheet_15d):
+    if sheet_15d.empty:
+        return pd.DataFrame(columns=[
+            "Category", "TradeDate", "Symbol", "Sector", "Company",
+            "SentimentSignal", "AccumulationScore", "DistributionScore", "ShakeoutScore",
+            "AccHits4", "DistHits4", "ShakeHits3", "Close", "Volume",
+            "Score_15D", "Signal_15D", "InsightReason", "SentimentReason"
+        ])
+
+    base_cols = [
+        "TradeDate", "Symbol", "Sector", "Company",
+        "SentimentSignal", "AccumulationScore", "DistributionScore", "ShakeoutScore",
+        "AccHits4", "DistHits4", "ShakeHits3",
+        "Close", "Volume", "Score_15D", "Signal_15D", "InsightReason", "SentimentReason"
+    ]
+    x = sheet_15d.copy()
+    for c in ["AccConfirmed", "DistConfirmed", "ShakeConfirmed"]:
+        if c not in x.columns:
+            x[c] = False
+
+    acc = x[x["AccConfirmed"].fillna(False)].copy()
+    acc = acc.sort_values(["AccHits4", "Score_15D"], ascending=[False, False]).head(SENTIMENT_TOP_N_EACH)
+    acc.insert(0, "Category", "ACCUMULATION")
+
+    dist = x[x["DistConfirmed"].fillna(False)].copy()
+    dist = dist.sort_values(["DistHits4", "Score_15D"], ascending=[False, False]).head(SENTIMENT_TOP_N_EACH)
+    dist.insert(0, "Category", "DISTRIBUTION")
+
+    shake = x[x["ShakeConfirmed"].fillna(False)].copy()
+    shake = shake.sort_values(["ShakeHits3", "Score_15D"], ascending=[False, False]).head(SENTIMENT_TOP_N_EACH)
+    shake.insert(0, "Category", "SHAKEOUT")
+
+    out = pd.concat([acc, dist, shake], ignore_index=True)
+    cols = ["Category"] + [c for c in base_cols if c in out.columns]
+    return out[cols]
 
 
 # =========================
@@ -605,17 +787,17 @@ def style_sheet(ws):
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_fill = PatternFill("solid", fgColor="DCE6F1")
 
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="000000")
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = border
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = border
 
     for row in ws.iter_rows(min_row=2):
-        for c in row:
-            c.border = border
-            if isinstance(c.value, str) and len(c.value) > 50:
-                c.alignment = Alignment(wrap_text=True, vertical="top")
+        for cell in row:
+            cell.border = border
+            if isinstance(cell.value, str) and len(cell.value) > 60:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 
 def add_table_sheet(ws, df, name):
@@ -640,19 +822,18 @@ def add_table_sheet(ws, df, name):
         showColumnStripes=False,
     )
     ws.add_table(tab)
-
     auto_fit_columns(ws)
 
 
-def auto_fit_columns(ws, min_width=10, max_width=45):
+def auto_fit_columns(ws, min_w=10, max_w=45):
     for col in ws.columns:
-        max_len = 0
+        mx = 0
         letter = get_column_letter(col[0].column)
         for cell in col:
             if cell.value is None:
                 continue
-            max_len = max(max_len, len(str(cell.value)))
-        ws.column_dimensions[letter].width = max(min_width, min(max_width, max_len + 2))
+            mx = max(mx, len(str(cell.value)))
+        ws.column_dimensions[letter].width = max(min_w, min(max_w, mx + 2))
 
 
 def color_scale(ws, col_name):
@@ -672,64 +853,65 @@ def color_scale(ws, col_name):
     )
 
 
-def number_format(ws, fmt_map):
+def number_format(ws, mapping):
     header = [c.value for c in ws[1]]
-    for col_name, fmt in fmt_map.items():
+    for col_name, fmt in mapping.items():
         if col_name not in header:
             continue
         idx = header.index(col_name) + 1
         for r in range(2, ws.max_row + 1):
-            ws.cell(r, idx).number_format = fmt
+            ws.cell(row=r, column=idx).number_format = fmt
 
 
 # =========================
 # MAIN
 # =========================
 def main():
-    floor_dates, floor_files = list_dates_from_folder(FLOOR_DIR, FLOOR_RE)
-    price_dates, price_files = list_dates_from_folder(PRICE_DIR, PRICE_RE)
+    print("SCRIPT =", Path(__file__).resolve())
+    print("ROOT =", ROOT)
+    print("FLOOR_DIR =", FLOOR_DIR)
+    print("PRICE_DIR =", PRICE_DIR)
+    print("FLOOR_DIR exists =", FLOOR_DIR.exists())
+    print("PRICE_DIR exists =", PRICE_DIR.exists())
 
-    if not floor_dates:
+    floor_pairs = list_dated_files(FLOOR_DIR, FLOOR_RE)
+    price_pairs = list_dated_files(PRICE_DIR, PRICE_RE)
+
+    if not floor_pairs:
         raise RuntimeError(f"No floorsheet csv files found in {FLOOR_DIR}")
-    if not price_dates:
+    if not price_pairs:
         raise RuntimeError(f"No share price csv files found in {PRICE_DIR}")
 
-    floor_map = {d: f for d, f in zip(floor_dates, floor_files)}
-    price_map = {d: f for d, f in zip(price_dates, price_files)}
+    floor_dates = [d for d, _ in floor_pairs]
+    price_dates = [d for d, _ in price_pairs]
 
-    # use common dates only
     common_dates = sorted(set(floor_dates).intersection(set(price_dates)))
     if not common_dates:
         raise RuntimeError("No common dates found between floor sheet and share price files.")
 
-    win_dates = choose_window_dates(common_dates, LOOKBACK_DAYS)
-    latest_date = pd.to_datetime(win_dates[-1])
+    signal_dates = choose_last_n_dates(common_dates, LOOKBACK_SIGNAL)
+    hist_dates = choose_last_n_dates(common_dates, max(PRICE_HISTORY_LOAD, LOOKBACK_SIGNAL + 10))
+    latest_dt = pd.to_datetime(signal_dates[-1]).date()
 
-    print(f"✅ Using last {len(win_dates)} trading days")
-    print(f"✅ Latest date: {win_dates[-1]}")
+    floor_map = {d: p for d, p in floor_pairs}
+    price_map = {d: p for d, p in price_pairs}
 
-    # load sector
-    sector = load_sector_master(SECTOR_PATH)
+    fs_list = [read_floorsheet_file(floor_map[d], d) for d in signal_dates if d in floor_map]
+    pr_list = [read_price_file(price_map[d], d) for d in hist_dates if d in price_map]
 
-    # load floorsheet window
-    fs_list = [read_floorsheet_file(floor_map[d], d) for d in win_dates if d in floor_map]
     fs = pd.concat(fs_list, ignore_index=True) if fs_list else pd.DataFrame()
-
-    # load full enough price history for indicators
-    # use more than 15 days so MA20/RSI14 are valid
-    price_hist_dates = choose_window_dates(common_dates, max(LOOKBACK_DAYS + 10, 30))
-    pr_list = [read_price_file(price_map[d], d) for d in price_hist_dates if d in price_map]
     pr = pd.concat(pr_list, ignore_index=True) if pr_list else pd.DataFrame()
 
     if fs.empty:
-        raise RuntimeError("Floorsheet window data is empty.")
+        raise RuntimeError("Floor sheet window data is empty after loading.")
     if pr.empty:
-        raise RuntimeError("Price window data is empty.")
+        raise RuntimeError("Price data is empty after loading.")
 
-    # Floor metrics
+    sector = load_sector_master(SECTOR_FILE)
+
     floor_symbol = symbol_metrics_from_floorsheet(fs)
-
     bs_daily = broker_symbol_metrics(fs)
+
     if not bs_daily.empty:
         bs_window = bs_daily.groupby(["Symbol", "Broker"], as_index=False).agg(
             Buy_Qty=("Buy_Qty", "sum"),
@@ -742,38 +924,33 @@ def main():
         bs_window = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Days"])
 
     pressure = compute_pressure(bs_window, topn=5)
+    snapshot = build_symbol_snapshot(pr)
 
-    # Price snapshot
-    price_snapshot = build_price_snapshot(pr)
+    signals_5d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "5D")
+    signals_10d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "10D")
+    signals_15d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "15D")
 
-    # Insight table
-    detailed = build_insight_table(price_snapshot, floor_symbol, pressure, bs_window, sector)
-
-    if detailed.empty:
-        raise RuntimeError("No symbol qualified after processing.")
-
-    best_buy = detailed[detailed["Recommendation"] == "BEST BUY"].copy().head(40)
-    buy_list = detailed[detailed["Recommendation"] == "BUY"].copy().head(80)
-    hold_list = detailed[detailed["Recommendation"] == "HOLD"].copy().head(100)
-    sell_list = detailed[detailed["Recommendation"] == "SELL"].copy().head(100)
+    best_buy = signals_15d[signals_15d["Signal_15D"] == "BEST BUY"].copy().head(40)
+    buy_setups = signals_15d[signals_15d["Signal_15D"] == "BUY"].copy().head(80)
+    hold_list = signals_15d[signals_15d["Signal_15D"] == "HOLD"].copy().head(120)
+    sell_list = signals_15d[signals_15d["Signal_15D"] == "SELL"].copy().head(120)
 
     acc_brokers, dist_brokers = top_broker_accumulation_distribution(bs_window, topn=TOP_BROKER_N)
     acc_brokers = acc_brokers.merge(sector, on="Symbol", how="left")
     dist_brokers = dist_brokers.merge(sector, on="Symbol", how="left")
 
-    acc_brokers = acc_brokers.sort_values(["Net_Qty", "Active_Days"], ascending=[False, False])
-    dist_brokers = dist_brokers.sort_values(["Net_Qty", "Active_Days"], ascending=[True, False])
+    sentiment_top = build_sentiment_top(signals_15d)
 
     readme = pd.DataFrame([
-        ["Purpose", "Capture detailed short-term insight from floor sheet and OHLC data."],
-        ["Lookback", f"{LOOKBACK_DAYS} trading days for floor insight; longer price history used for indicators."],
-        ["Floor Source", "outputs/Floor Sheet/floorsheet_YYYY-MM-DD.csv"],
-        ["Price Source", "outputs/sharesansar/SharePrice_YYYY-MM-DD.csv"],
-        ["Required Floor Columns", "Transact No., Symbol, Buyer, Seller, Quantity, Rate, Amount"],
-        ["Recommendations", "BEST BUY / BUY / HOLD / SELL"],
-        ["Best Buy Idea", "Strong price structure + buyer pressure + broker accumulation + VWAP support + volume confirmation"],
-        ["Targets", "Target1=1.5R, Target2=2.5R, Target3=3R from Entry vs StopLoss"],
-        ["Stop Logic", "Lower of LL5 and Close - 1.2*ATR14"],
+        ["Purpose", "OHLCV + Floor Sheet combined short-term signal report."],
+        ["Signal windows", "5D = early, 10D = confirmation, 15D = primary decision."],
+        ["Data needed", "At least 15 common trading days; extra price history loaded for RSI/ATR/MA calculations."],
+        ["Floor source", str(FLOOR_DIR)],
+        ["Price source", str(PRICE_DIR)],
+        ["Sector source", str(SECTOR_FILE)],
+        ["Recommendation logic", "BEST BUY / BUY / HOLD / SELL using price trend + volume + floor pressure + broker behavior + sentiment."],
+        ["Trade plan", "Entry=current close, StopLoss=min(LL5, Close-1.2*ATR14), targets at 1.5R / 2.5R / 3R."],
+        ["Path debug", f"Script root resolved to: {ROOT}"],
     ], columns=["Item", "Explanation"])
 
     wb = Workbook()
@@ -781,17 +958,22 @@ def main():
 
     sheets = {
         "README": readme,
-        "Detailed_Insights": detailed,
+        "Signals_5D": signals_5d,
+        "Signals_10D": signals_10d,
+        "Signals_15D": signals_15d,
         "Best_Buy": best_buy,
-        "Buy_Setups": buy_list,
+        "Buy_Setups": buy_setups,
         "Hold_List": hold_list,
         "Sell_List": sell_list,
         "Broker_Accumulation": acc_brokers,
         "Broker_Distribution": dist_brokers,
+        "Sentiment_Top": sentiment_top,
     }
 
     fmt_map = {
-        "InsightScore": "0.00",
+        "Score_5D": "0.00",
+        "Score_10D": "0.00",
+        "Score_15D": "0.00",
         "Entry": "#,##0.00",
         "StopLoss": "#,##0.00",
         "Target1": "#,##0.00",
@@ -801,28 +983,53 @@ def main():
         "VWAP": "#,##0.00",
         "Floor_VWAP": "#,##0.00",
         "RET1_%": "0.00",
+        "RET2_%": "0.00",
         "RET3_%": "0.00",
         "RET5_%": "0.00",
+        "RET7_%": "0.00",
         "RET10_%": "0.00",
         "RET15_%": "0.00",
+        "RET20_%": "0.00",
+        "MA5": "#,##0.00",
+        "MA7": "#,##0.00",
+        "MA10": "#,##0.00",
+        "MA15": "#,##0.00",
+        "MA20": "#,##0.00",
+        "HH5": "#,##0.00",
+        "HH10": "#,##0.00",
+        "HH15": "#,##0.00",
+        "LL5": "#,##0.00",
+        "LL10": "#,##0.00",
+        "LL15": "#,##0.00",
+        "Volume": "#,##0",
+        "Floor_Qty": "#,##0",
+        "Trades": "0",
+        "Floor_Amount_Cr": "0.000",
         "Buy_Pressure": "0.00",
         "Sell_Pressure": "0.00",
+        "Net_Broker_Bias": "#,##0",
+        "Accum_Brokers": "0",
+        "Dist_Brokers": "0",
+        "Active_Brokers": "0",
         "RSI14": "0.00",
         "ATR14": "0.00",
         "ATR14_Pct": "0.00",
         "RangePct": "0.00",
         "Body_Pct": "0.00",
         "Close_Pos": "0.00",
-        "Price_vs_VWAP_Pct": "0.00",
+        "UpperWickPct": "0.00",
+        "LowerWickPct": "0.00",
         "Vol_Surge": "0.00",
-        "Floor_Amount_Cr": "0.000",
-        "PriceScore": "0",
-        "VolumeScore": "0",
-        "FloorScore": "0",
-        "RiskPenalty": "0",
-        "Net_Qty": "#,##0",
+        "Price_vs_VWAP_Pct": "0.00",
+        "AccumulationScore": "0",
+        "DistributionScore": "0",
+        "ShakeoutScore": "0",
+        "AccHits4": "0",
+        "DistHits4": "0",
+        "ShakeHits3": "0",
         "Buy_Qty": "#,##0",
         "Sell_Qty": "#,##0",
+        "Net_Qty": "#,##0",
         "Buy_Amount": "#,##0.00",
         "Active_Days": "0",
     }
@@ -831,15 +1038,18 @@ def main():
         ws = wb.create_sheet(sheet_name[:31])
         add_table_sheet(ws, df, f"T{i}")
         number_format(ws, fmt_map)
-
-        for c in ["InsightScore", "Buy_Pressure", "Sell_Pressure", "Vol_Surge", "RET10_%", "PriceScore", "FloorScore"]:
+        for c in [
+            "Score_5D", "Score_10D", "Score_15D",
+            "Buy_Pressure", "Sell_Pressure", "Vol_Surge",
+            "RET10_%", "AccumulationScore", "DistributionScore",
+            "AccHits4", "DistHits4", "ShakeHits3"
+        ]:
             color_scale(ws, c)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = OUT_DIR / f"Floor_OHLC_Insight_Report_{ts}.xlsx"
+    out_path = OUT_DIR / f"nepse_signals_{latest_dt}.xlsx"
     wb.save(out_path)
 
-    print(f"✅ Report generated: {out_path}")
+    print(f"✅ Excel created: {out_path}")
 
 
 if __name__ == "__main__":
