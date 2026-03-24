@@ -1,6 +1,5 @@
 import os
 import re
-import sys
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -180,44 +179,36 @@ def click_next_page(driver, wait, max_retries=3):
     return False
 
 
-def get_today_npt():
-    npt = timezone(timedelta(hours=5, minutes=45))
-    now_npt = datetime.now(npt)
-    return now_npt.strftime("%d/%m/%Y")
-
-
-def pick_date_from_calendar(driver, wait, date_to_pick):
-    day_to_pick = str(int(date_to_pick.split("/")[0]))
-
-    print("Using date:", date_to_pick)
-    print("Picking day:", day_to_pick)
-
-    calendar_icon = wait.until(
-        EC.element_to_be_clickable((
-            By.XPATH,
-            "//i[contains(@class,'material-icons') and normalize-space()='calendar_today']"
-        ))
-    )
-    driver.execute_script("arguments[0].click();", calendar_icon)
-    time.sleep(2)
-
-    day_button = wait.until(
-        EC.element_to_be_clickable((
-            By.XPATH,
-            f"//div[contains(@class,'q-date__calendar-days')]//button[.//span[contains(@class,'block') and normalize-space()='{day_to_pick}']]"
-        ))
-    )
-    driver.execute_script("arguments[0].click();", day_button)
-    time.sleep(2)
-
-
 def has_valid_rows(rows):
-    valid_rows = []
     for row in rows:
         row_text = " ".join(row).strip().lower()
         if row_text and "no data" not in row_text and "no records" not in row_text:
-            valid_rows.append(row)
-    return valid_rows
+            return True
+    return False
+
+
+def check_data_available(driver, wait):
+    """
+    Only keep yes/no logic:
+    - if data exists -> yes
+    - if no data -> no
+    """
+    try:
+        wait_for_table(driver, wait)
+        time.sleep(2)
+
+        rows = scrape_current_page(driver)
+
+        if has_valid_rows(rows):
+            print("RESULT: yes")
+            return True
+
+        print("RESULT: no")
+        return False
+
+    except TimeoutException:
+        print("RESULT: no")
+        return False
 
 
 def main():
@@ -227,7 +218,6 @@ def main():
     # Nepal time
     npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
-    today_date_pick = get_today_npt()
 
     # Output path
     out_dir = os.path.join(base_dir, "outputs", "Floor Sheet")
@@ -241,27 +231,10 @@ def main():
     try:
         print("Opening website...")
         driver.get(URL)
-        time.sleep(3)
 
-        pick_date_from_calendar(driver, wait, today_date_pick)
-
-        try:
-            wait_for_table(driver, wait)
-            first_page_data = scrape_current_page(driver)
-            valid_first_page = has_valid_rows(first_page_data)
-
-            if not valid_first_page:
-                print("RESULT: no")
-                print("No valid rows found for selected date. Stopping workflow.")
-                sys.exit(1)
-
-            print("RESULT: yes")
-            print(f"Rows found on first page: {len(valid_first_page)}")
-
-        except TimeoutException:
-            print("RESULT: no")
-            print("Table did not load for selected date. Stopping workflow.")
-            sys.exit(1)
+        if not check_data_available(driver, wait):
+            print("Stopping script because no data available.")
+            return
 
         all_data = []
         page_no = 1
