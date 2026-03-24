@@ -66,6 +66,7 @@ def normalize_columns(df):
         "to": "to_date",
         "list": "list",
         "symbol": "symbol",
+        "symbols": "symbols",
         "company": "company",
         "sectors": "sector",
         "sector": "sector",
@@ -112,8 +113,12 @@ def normalize_columns(df):
         "top_sector": "top_sector",
         "broker": "broker",
         "brokername": "broker_name",
+        "broker_name": "broker_name",
         "brokertype": "broker_type",
+        "broker_type": "broker_type",
         "tag": "tag",
+        "concentration_pct": "concentration_pct",
+        "flip_ratio": "flip_ratio",
     }
 
     rename_map = {}
