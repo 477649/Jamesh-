@@ -28,9 +28,11 @@
 # - Early smart money is detected BEFORE full breakout confirmation
 # - BUY / BEST BUY still require Close > Floor_VWAP
 # - all sheets auto-fit
+# - print layout includes repeated header + page numbers
 # ------------------------------------------------------------
 
 import re
+from math import ceil
 from pathlib import Path
 
 import numpy as np
@@ -599,7 +601,6 @@ def build_early_smart_money(snapshot, floor_symbol, pressure, broker_stats, sect
         False,
     )
 
-    # early setup is meant to catch accumulation before full breakout
     build_score = (
         (x["Buy_Pressure"] > x["Sell_Pressure"]).astype(int) * 16 +
         (x["Buy_Pressure"] >= 0.55).astype(int) * 14 +
@@ -636,9 +637,6 @@ def build_early_smart_money(snapshot, floor_symbol, pressure, broker_stats, sect
     x["EarlySmartSignal"] = "NO"
     x.loc[x["EarlySmartScore"] >= EARLY_WATCH_MIN, "EarlySmartSignal"] = "WATCH"
     x.loc[x["EarlySmartScore"] >= EARLY_SMART_MIN, "EarlySmartSignal"] = "EARLY ACCUMULATION"
-
-    # if already above floor VWAP and fully strong, this may later become BUY in confirmation sheets
-    # if below floor VWAP, still allowed here because this is early smart-money detection
 
     reasons = []
     for _, r in x.iterrows():
@@ -953,19 +951,76 @@ def style_sheet(ws):
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             cell.border = border
-            if isinstance(cell.value, str) and len(cell.value) > 60:
-                cell.alignment = Alignment(wrap_text=True, vertical="top")
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def auto_fit_columns(ws, min_w=10, max_w=45):
-    for col in ws.columns:
-        mx = 0
-        letter = get_column_letter(col[0].column)
-        for cell in col:
+    for col_cells in ws.columns:
+        letter = get_column_letter(col_cells[0].column)
+        max_len = 0
+
+        for cell in col_cells:
             if cell.value is None:
                 continue
-            mx = max(mx, len(str(cell.value)))
-        ws.column_dimensions[letter].width = max(min_w, min(max_w, mx + 2))
+
+            text = str(cell.value)
+            lines = text.splitlines() if "\n" in text else [text]
+            longest = max(len(line) for line in lines) if lines else 0
+            max_len = max(max_len, longest)
+
+        ws.column_dimensions[letter].width = max(min_w, min(max_w, max_len + 2))
+
+
+def auto_fit_rows(ws, base_height=18, max_height=90):
+    """
+    Approximate Excel auto-fit row height.
+    openpyxl cannot truly auto-fit rows, so this estimates height
+    from wrapped text length and current column width.
+    """
+    col_widths = {}
+    for col_idx in range(1, ws.max_column + 1):
+        letter = get_column_letter(col_idx)
+        width = ws.column_dimensions[letter].width
+        col_widths[col_idx] = width if width else 10
+
+    for row_idx in range(1, ws.max_row + 1):
+        max_lines = 1
+
+        for col_idx in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if cell.value is None:
+                continue
+
+            text = str(cell.value)
+            explicit_lines = text.splitlines() if "\n" in text else [text]
+            width = max(col_widths.get(col_idx, 10), 1)
+
+            wrapped_lines = 0
+            for part in explicit_lines:
+                wrapped_lines += max(1, ceil(len(part) / max(width - 1, 1)))
+
+            max_lines = max(max_lines, wrapped_lines)
+
+        ws.row_dimensions[row_idx].height = min(max_height, max(base_height, max_lines * base_height))
+
+
+def setup_print(ws):
+    ws.print_title_rows = "1:1"
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    ws.page_margins.left = 0.3
+    ws.page_margins.right = 0.3
+    ws.page_margins.top = 0.5
+    ws.page_margins.bottom = 0.5
+    ws.page_margins.header = 0.2
+    ws.page_margins.footer = 0.2
+
+    ws.oddFooter.center.text = "Page &[Page] of &[Pages]"
+    ws.evenFooter.center.text = "Page &[Page] of &[Pages]"
 
 
 def add_table_sheet(ws, df, name):
@@ -990,7 +1045,10 @@ def add_table_sheet(ws, df, name):
         showColumnStripes=False,
     )
     ws.add_table(tab)
+
     auto_fit_columns(ws)
+    auto_fit_rows(ws)
+    setup_print(ws)
 
 
 def color_scale(ws, col_name):
@@ -1122,7 +1180,8 @@ def main():
         ["Price source", str(PRICE_DIR)],
         ["Sector source", str(SECTOR_FILE)],
         ["Trade plan", "Entry=current close, StopLoss=min(LL5, Close-1.2*ATR14), targets at 1.5R / 2.5R / 3R."],
-        ["Auto-fit", "All sheets auto-fit column widths."],
+        ["Auto-fit", "All sheets auto-fit column widths and estimated row heights."],
+        ["Print setup", "Landscape, fit-to-width, repeated header row, page number footer."],
         ["Path debug", f"Script root resolved to: {ROOT}"],
     ], columns=["Item", "Explanation"])
 
