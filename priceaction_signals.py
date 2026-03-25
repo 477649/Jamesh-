@@ -5,6 +5,7 @@
 # - fixed score calibration
 # - backtest
 # - excel output with table + autofit + wrap text
+# - pandas deprecation warning fixed
 # ==========================================
 
 import re
@@ -518,6 +519,7 @@ def add_model_v2_features(g: pd.DataFrame):
 
 # =========================================================
 # 15-TRADING-DAY FLOOR FEATURES
+# WARNING-FREE VERSION
 # =========================================================
 def add_floor_15d_features(floor_history: pd.DataFrame) -> pd.DataFrame:
     f = floor_history.copy()
@@ -538,38 +540,33 @@ def add_floor_15d_features(floor_history: pd.DataFrame) -> pd.DataFrame:
         if c not in f.columns:
             f[c] = np.nan
 
-    def per_symbol(g: pd.DataFrame) -> pd.DataFrame:
-        g = g.sort_values("TradeDate").copy()
+    f["Floor_Qty"] = f["Floor_Qty"].fillna(0.0)
+    f["Floor_Amount_Cr"] = f["Floor_Amount_Cr"].fillna(0.0)
+    f["Trades"] = f["Trades"].fillna(0.0)
 
-        g["Floor_Qty"] = g["Floor_Qty"].fillna(0.0)
-        g["Floor_Amount_Cr"] = g["Floor_Amount_Cr"].fillna(0.0)
-        g["Trades"] = g["Trades"].fillna(0.0)
+    f["FloorActive"] = (f["Floor_Qty"] > 0).astype(int)
 
-        g["FloorActive"] = (g["Floor_Qty"] > 0).astype(int)
+    grp = f.groupby("Symbol", sort=False)
 
-        g["FloorDays15"] = g["FloorActive"].rolling(15, min_periods=15).sum()
-        g["FloorQty15_Sum"] = g["Floor_Qty"].rolling(15, min_periods=15).sum()
-        g["FloorAmt15_Sum"] = g["Floor_Amount_Cr"].rolling(15, min_periods=15).sum()
-        g["FloorVWAP15_Avg"] = g["Floor_VWAP"].rolling(15, min_periods=15).mean()
-        g["FloorVWAP15_Max"] = g["Floor_VWAP"].rolling(15, min_periods=15).max()
-        g["FloorVWAP15_Min"] = g["Floor_VWAP"].rolling(15, min_periods=15).min()
+    f["FloorDays15"] = grp["FloorActive"].transform(lambda s: s.rolling(15, min_periods=15).sum())
+    f["FloorQty15_Sum"] = grp["Floor_Qty"].transform(lambda s: s.rolling(15, min_periods=15).sum())
+    f["FloorAmt15_Sum"] = grp["Floor_Amount_Cr"].transform(lambda s: s.rolling(15, min_periods=15).sum())
+    f["FloorVWAP15_Avg"] = grp["Floor_VWAP"].transform(lambda s: s.rolling(15, min_periods=15).mean())
+    f["FloorVWAP15_Max"] = grp["Floor_VWAP"].transform(lambda s: s.rolling(15, min_periods=15).max())
+    f["FloorVWAP15_Min"] = grp["Floor_VWAP"].transform(lambda s: s.rolling(15, min_periods=15).min())
+    f["FloorVWAP5_Avg"] = grp["Floor_VWAP"].transform(lambda s: s.rolling(5, min_periods=5).mean())
 
-        g["FloorVWAP5_Avg"] = g["Floor_VWAP"].rolling(5, min_periods=5).mean()
-        g["RisingFloorVWAP"] = (
-            (g["FloorVWAP5_Avg"] > g["FloorVWAP15_Avg"]) &
-            g["FloorVWAP5_Avg"].notna() &
-            g["FloorVWAP15_Avg"].notna()
-        ).astype(int)
+    f["RisingFloorVWAP"] = (
+        (f["FloorVWAP5_Avg"] > f["FloorVWAP15_Avg"]) &
+        f["FloorVWAP5_Avg"].notna() &
+        f["FloorVWAP15_Avg"].notna()
+    ).astype(int)
 
-        g["FloorStrength15"] = np.where(
-            g["FloorDays15"] > 0,
-            g["FloorQty15_Sum"] / g["FloorDays15"],
-            np.nan
-        )
-
-        return g
-
-    f = f.groupby("Symbol", group_keys=False).apply(per_symbol)
+    f["FloorStrength15"] = np.where(
+        f["FloorDays15"] > 0,
+        f["FloorQty15_Sum"] / f["FloorDays15"],
+        np.nan
+    )
 
     keep_cols = [
         "Symbol", "TradeDate", "Trades", "Floor_Qty", "Floor_Amount_Cr", "Floor_VWAP",
@@ -1107,10 +1104,13 @@ def summarize_backtest(signal_history_with_ret: pd.DataFrame, horizons=(3, 5, 10
 
 
 def run_backtest():
-    price_all, _, _, _, _, _ = load_pipeline_data()
+    price_all, fs_all, sector, common_dates = load_full_history_for_backtest()
+    _ = fs_all, sector, common_dates  # keep explicit for debugging consistency
+
     signal_history = build_signal_history()
     signal_history = add_forward_returns(signal_history, price_all, horizons=(3, 5, 10, 15))
     summary = summarize_backtest(signal_history, horizons=(3, 5, 10, 15))
+
     return signal_history, summary
 
 
@@ -1339,20 +1339,33 @@ if __name__ == "__main__":
     print("FLOOR_DIR =", FLOOR_DIR)
     print("SECTOR_FILE =", SECTOR_FILE)
 
+    print("Step 1: run current signals")
     current_signals, latest_dt = run_3state_model()
-    signal_history, backtest_summary = run_backtest()
+    print(f"Step 1 done: current_signals rows = {len(current_signals)}")
 
+    print("Step 2: run backtest")
+    signal_history, backtest_summary = run_backtest()
+    print(f"Step 2 done: signal_history rows = {len(signal_history)}, backtest_summary rows = {len(backtest_summary)}")
+
+    print("Step 3: save excel")
     excel_path = save_to_excel(
         current_signals=current_signals,
         signal_history=signal_history,
         backtest_summary=backtest_summary,
         latest_dt=latest_dt
     )
+    print("Step 3 done")
 
     print("\n=== CURRENT SIGNALS ===")
-    print(current_signals.head(20).to_string(index=False))
+    if current_signals.empty:
+        print("No current signals.")
+    else:
+        print(current_signals.head(20).to_string(index=False))
 
     print("\n=== BACKTEST SUMMARY ===")
-    print(backtest_summary.to_string(index=False))
+    if backtest_summary.empty:
+        print("No backtest summary.")
+    else:
+        print(backtest_summary.to_string(index=False))
 
-    print(f"\n✅ Excel created: {excel_path}")
+    print(f"\nExcel created: {excel_path}")
