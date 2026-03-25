@@ -1,8 +1,8 @@
 # priceaction_signals.py
 # ------------------------------------------------------------
-# OHLCV + Floor Sheet Price Action Report
+# OHLCV + Floor Sheet Price Action + Early Smart Money Report
 #
-# Uses repo structure:
+# Repo structure:
 # - outputs/Floor Sheet/floorsheet_YYYY-MM-DD.csv
 # - outputs/sharesansar/SharePrice_YYYY-MM-DD.csv
 # - outputs/Sector/sector_master.csv
@@ -11,6 +11,8 @@
 # - outputs/PriceAction/nepse_signals_<latest_date>.xlsx
 #
 # Sheets:
+# - README
+# - Early_SmartMoney
 # - Signals_5D
 # - Signals_10D
 # - Signals_15D
@@ -21,11 +23,15 @@
 # - Broker_Accumulation
 # - Broker_Distribution
 # - Sentiment_Top
+#
+# Main logic:
+# - Early smart money is detected BEFORE full breakout confirmation
+# - BUY / BEST BUY still require Close > Floor_VWAP
+# - all sheets auto-fit
 # ------------------------------------------------------------
 
 import re
 from pathlib import Path
-from datetime import date as _date
 
 import numpy as np
 import pandas as pd
@@ -53,7 +59,7 @@ PRICE_RE = re.compile(r"SharePrice_(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
 FLOOR_RE = re.compile(r".*?(\d{4}-\d{2}-\d{2}).*\.csv$", re.IGNORECASE)
 
 LOOKBACK_SIGNAL = 15
-PRICE_HISTORY_LOAD = 40
+PRICE_HISTORY_LOAD = 45
 TOP_BROKER_N = 8
 CRORE = 10_000_000
 
@@ -61,9 +67,11 @@ BEST_BUY_MIN = 78
 BUY_MIN = 63
 HOLD_MIN = 45
 
+EARLY_SMART_MIN = 68
+EARLY_WATCH_MIN = 52
+
 SENTIMENT_TOP_N_EACH = 25
 
-# sentiment thresholds
 SENT_ACC_TH = 60
 SENT_DIST_TH = 60
 SENT_SHAKE_TH = 70
@@ -158,7 +166,6 @@ def load_sector_master(path: Path):
 
     if "Sector" not in df.columns and "Sectors" in df.columns:
         df = df.rename(columns={"Sectors": "Sector"})
-
     if "Company" not in df.columns and "Company Name" in df.columns:
         df = df.rename(columns={"Company Name": "Company"})
 
@@ -258,7 +265,8 @@ def symbol_metrics_from_floorsheet(fs: pd.DataFrame):
 def broker_symbol_metrics(fs: pd.DataFrame):
     if fs.empty:
         return pd.DataFrame(columns=[
-            "TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Buy_Day"
+            "TradeDate", "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty",
+            "Buy_Amount", "Active_Buy_Day"
         ])
 
     buy = fs[["TradeDate", "Symbol", "Buyer", "Quantity", "Rate"]].copy()
@@ -325,7 +333,10 @@ def compute_pressure(bs_window: pd.DataFrame, topn=5):
 
 
 def top_broker_accumulation_distribution(bs_window: pd.DataFrame, topn=TOP_BROKER_N):
-    empty = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Days", "Side"])
+    empty = pd.DataFrame(columns=[
+        "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty",
+        "Buy_Amount", "Active_Days", "Side"
+    ])
     if bs_window.empty:
         return empty.copy(), empty.copy()
 
@@ -345,6 +356,39 @@ def top_broker_accumulation_distribution(bs_window: pd.DataFrame, topn=TOP_BROKE
     )
     dist["Side"] = "DISTRIBUTION"
     return acc, dist
+
+
+def build_broker_stats(bs_window: pd.DataFrame):
+    if bs_window.empty:
+        return pd.DataFrame(columns=[
+            "Symbol", "Accum_Brokers", "Dist_Brokers", "Active_Brokers",
+            "Broker_Balance", "TopBuyerNet", "TopSellerNetAbs",
+            "TopBuyerActiveDays", "TopSellerActiveDays"
+        ])
+
+    pos = (
+        bs_window.sort_values(["Symbol", "Net_Qty"], ascending=[True, False])
+        .groupby("Symbol")
+        .head(1)[["Symbol", "Net_Qty", "Active_Days"]]
+        .rename(columns={"Net_Qty": "TopBuyerNet", "Active_Days": "TopBuyerActiveDays"})
+    )
+
+    neg = bs_window.copy()
+    neg["Net_Qty_AbsNeg"] = (-neg["Net_Qty"]).clip(lower=0)
+    neg = (
+        neg.sort_values(["Symbol", "Net_Qty_AbsNeg"], ascending=[True, False])
+        .groupby("Symbol")
+        .head(1)[["Symbol", "Net_Qty_AbsNeg", "Active_Days"]]
+        .rename(columns={"Net_Qty_AbsNeg": "TopSellerNetAbs", "Active_Days": "TopSellerActiveDays"})
+    )
+
+    base = bs_window.groupby("Symbol", as_index=False).agg(
+        Accum_Brokers=("Net_Qty", lambda s: int((s > 0).sum())),
+        Dist_Brokers=("Net_Qty", lambda s: int((s < 0).sum())),
+        Active_Brokers=("Broker", "nunique"),
+    )
+    base["Broker_Balance"] = base["Accum_Brokers"] - base["Dist_Brokers"]
+    return base.merge(pos, on="Symbol", how="left").merge(neg, on="Symbol", how="left")
 
 
 # =========================
@@ -390,6 +434,9 @@ def add_price_features(g):
         (g["Close"] / g["VWAP"] - 1.0) * 100,
         np.nan,
     )
+
+    g["HH10_PRIOR"] = g["HH10"].shift(1)
+    g["HH15_PRIOR"] = g["HH15"].shift(1)
 
     return g
 
@@ -502,6 +549,7 @@ def build_symbol_snapshot(price_all: pd.DataFrame):
 
             "MA5": last["MA5"], "MA7": last["MA7"], "MA10": last["MA10"], "MA15": last["MA15"], "MA20": last["MA20"],
             "HH5": last["HH5"], "HH10": last["HH10"], "HH15": last["HH15"], "LL5": last["LL5"], "LL10": last["LL10"], "LL15": last["LL15"],
+            "HH10_PRIOR": last["HH10_PRIOR"], "HH15_PRIOR": last["HH15_PRIOR"],
 
             "RET1_%": last["RET1"], "RET2_%": last["RET2"], "RET3_%": last["RET3"], "RET5_%": last["RET5"],
             "RET7_%": last["RET7"], "RET10_%": last["RET10"], "RET15_%": last["RET15"], "RET20_%": last["RET20"],
@@ -527,6 +575,115 @@ def build_symbol_snapshot(price_all: pd.DataFrame):
 
 
 # =========================
+# EARLY SMART MONEY
+# =========================
+def build_early_smart_money(snapshot, floor_symbol, pressure, broker_stats, sector):
+    x = snapshot.copy()
+    x = x.merge(floor_symbol, on="Symbol", how="left")
+    x = x.merge(pressure, on="Symbol", how="left")
+    x = x.merge(broker_stats, on="Symbol", how="left")
+    x = x.merge(sector, on="Symbol", how="left")
+
+    for c in [
+        "Trades", "Floor_Qty", "Floor_Amount", "Floor_VWAP", "Floor_Amount_Cr",
+        "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias", "Accum_Brokers",
+        "Dist_Brokers", "Active_Brokers", "Broker_Balance",
+        "TopBuyerNet", "TopSellerNetAbs", "TopBuyerActiveDays", "TopSellerActiveDays"
+    ]:
+        if c not in x.columns:
+            x[c] = np.nan
+
+    x["Above_Floor_VWAP"] = np.where(
+        x["Floor_VWAP"].notna() & x["Close"].notna(),
+        x["Close"] > x["Floor_VWAP"],
+        False,
+    )
+
+    # early setup is meant to catch accumulation before full breakout
+    build_score = (
+        (x["Buy_Pressure"] > x["Sell_Pressure"]).astype(int) * 16 +
+        (x["Buy_Pressure"] >= 0.55).astype(int) * 14 +
+        (x["Broker_Balance"] > 0).astype(int) * 10 +
+        (x["Accum_Brokers"] >= x["Dist_Brokers"]).astype(int) * 8 +
+        (x["TopBuyerActiveDays"].fillna(0) >= 3).astype(int) * 10 +
+        (x["Floor_Amount_Cr"].fillna(0) >= 1.0).astype(int) * 8 +
+        (x["Trades"].fillna(0) >= 80).astype(int) * 6 +
+        (x["AccumulationScore"].fillna(0) >= 60).astype(int) * 8 +
+        (x["AccConfirmed"].fillna(False)).astype(int) * 6
+    )
+
+    price_context = (
+        (x["Close"] >= x["MA5"]).astype(int) * 6 +
+        (x["MA5"] >= x["MA10"]).astype(int) * 6 +
+        (x["RSI14"].between(48, 68, inclusive="both")).astype(int) * 6 +
+        (x["Vol_Surge"].fillna(0) >= 1.10).astype(int) * 6 +
+        (x["Close_Pos"].fillna(0) >= 0.55).astype(int) * 4 +
+        (x["Close"] >= 0.96 * x["HH10"]).astype(int) * 6
+    )
+
+    early_penalty = (
+        (x["Sell_Pressure"].fillna(0) >= 0.55).astype(int) * 12 +
+        (x["DistributionScore"].fillna(0) >= 70).astype(int) * 12 +
+        (x["DistConfirmed"].fillna(False)).astype(int) * 12 +
+        (x["UpperWickPct"].fillna(0) >= 0.45).astype(int) * 6 +
+        (x["RSI14"].fillna(100) < 42).astype(int) * 6
+    )
+
+    raw = build_score + price_context - early_penalty
+    mn, mx = float(raw.min()), float(raw.max())
+    x["EarlySmartScore"] = np.where(mx > mn, 100 * (raw - mn) / (mx - mn), 50.0)
+
+    x["EarlySmartSignal"] = "NO"
+    x.loc[x["EarlySmartScore"] >= EARLY_WATCH_MIN, "EarlySmartSignal"] = "WATCH"
+    x.loc[x["EarlySmartScore"] >= EARLY_SMART_MIN, "EarlySmartSignal"] = "EARLY ACCUMULATION"
+
+    # if already above floor VWAP and fully strong, this may later become BUY in confirmation sheets
+    # if below floor VWAP, still allowed here because this is early smart-money detection
+
+    reasons = []
+    for _, r in x.iterrows():
+        tags = []
+        if r.get("Buy_Pressure", 0) > r.get("Sell_Pressure", 0):
+            tags.append("buy pressure rising")
+        if r.get("Broker_Balance", 0) > 0:
+            tags.append("positive broker balance")
+        if r.get("TopBuyerActiveDays", 0) >= 3:
+            tags.append("persistent top buyer")
+        if r.get("AccumulationScore", 0) >= 60:
+            tags.append("accumulation score strong")
+        if pd.notna(r.get("Close")) and pd.notna(r.get("HH10")) and r["Close"] >= 0.96 * r["HH10"]:
+            tags.append("near breakout zone")
+        if pd.notna(r.get("Close")) and pd.notna(r.get("Floor_VWAP")):
+            tags.append("above floor VWAP" if r["Close"] > r["Floor_VWAP"] else "below floor VWAP")
+        if r.get("DistConfirmed", False):
+            tags.append("distribution risk")
+        reasons.append(", ".join(tags[:7]))
+
+    x["EarlyReason"] = reasons
+
+    cols = [
+        "TradeDate", "Symbol", "Sector", "Company",
+        "EarlySmartSignal", "EarlySmartScore",
+        "Close", "VWAP", "Floor_VWAP", "Above_Floor_VWAP",
+        "RET3_%", "RET5_%", "RET10_%",
+        "MA5", "MA10", "HH10", "HH15",
+        "Volume", "Vol_Surge", "Trades", "Floor_Qty", "Floor_Amount_Cr",
+        "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias",
+        "Accum_Brokers", "Dist_Brokers", "Active_Brokers", "Broker_Balance",
+        "TopBuyerNet", "TopSellerNetAbs", "TopBuyerActiveDays", "TopSellerActiveDays",
+        "RSI14", "Close_Pos", "UpperWickPct",
+        "AccumulationScore", "DistributionScore", "ShakeoutScore",
+        "AccHits4", "DistHits4", "ShakeHits3",
+        "AccConfirmed", "DistConfirmed", "ShakeConfirmed",
+        "SentimentSignal", "SentimentReason",
+        "EarlyReason"
+    ]
+    cols = [c for c in cols if c in x.columns]
+    x = x[cols].sort_values(["EarlySmartScore", "Buy_Pressure", "AccumulationScore"], ascending=[False, False, False])
+    return x
+
+
+# =========================
 # WINDOW SCORING
 # =========================
 def score_window(x: pd.DataFrame, window_name: str):
@@ -547,7 +704,7 @@ def score_window(x: pd.DataFrame, window_name: str):
             (x["Close"] >= 0.98 * x["HH10"]).astype(int) * 10 +
             (x["RSI14"].between(52, 72, inclusive="both")).astype(int) * 8
         )
-    else:  # 15D
+    else:
         trend_score = (
             (x["Close"] > x["MA10"]).astype(int) * 8 +
             (x["MA10"] > x["MA15"]).astype(int) * 14 +
@@ -575,7 +732,7 @@ def score_window(x: pd.DataFrame, window_name: str):
         (x["Broker_Balance"] > 0).astype(int) * 6 +
         (x["Accum_Brokers"] >= x["Dist_Brokers"]).astype(int) * 6 +
         (x["Close"] >= x["VWAP"]).astype(int) * 6 +
-        (x["Close"] >= x["Floor_VWAP"]).astype(int) * 6
+        (x["Close"] > x["Floor_VWAP"]).astype(int) * 12
     )
 
     sentiment_bonus = (
@@ -587,6 +744,7 @@ def score_window(x: pd.DataFrame, window_name: str):
     risk_penalty = (
         (x["Sell_Pressure"] >= 0.55).astype(int) * 14 +
         (x["Close"] < x["VWAP"]).astype(int) * 10 +
+        (x["Close"] < x["Floor_VWAP"]).astype(int) * 12 +
         (x["RSI14"] < 45).astype(int) * 8 +
         (x["UpperWickPct"] >= 0.45).astype(int) * 6 +
         (x["Close_Pos"] <= 0.35).astype(int) * 5 +
@@ -602,8 +760,11 @@ def score_window(x: pd.DataFrame, window_name: str):
     signal[x[f"Score_{window_name}"] >= HOLD_MIN] = "HOLD"
     signal[x[f"Score_{window_name}"] >= BUY_MIN] = "BUY"
     signal[x[f"Score_{window_name}"] >= BEST_BUY_MIN] = "BEST BUY"
-    x[f"Signal_{window_name}"] = signal
 
+    signal[(signal == "BUY") & (~x["Above_Floor_VWAP"])] = "HOLD"
+    signal[(signal == "BEST BUY") & (~x["Above_Floor_VWAP"])] = "HOLD"
+
+    x[f"Signal_{window_name}"] = signal
     return x
 
 
@@ -618,7 +779,7 @@ def build_reason_row(r, window_name):
     if pd.notna(r.get("Close")) and pd.notna(r.get("VWAP")):
         parts.append("above VWAP" if r["Close"] >= r["VWAP"] else "below VWAP")
 
-    if pd.notna(r.get("Floor_VWAP")) and pd.notna(r.get("Close")) and r["Close"] >= r["Floor_VWAP"]:
+    if pd.notna(r.get("Floor_VWAP")) and pd.notna(r.get("Close")) and r["Close"] > r["Floor_VWAP"]:
         parts.append("above floor VWAP")
 
     if pd.notna(r.get("Vol_Surge")) and r["Vol_Surge"] >= 1.5:
@@ -663,32 +824,26 @@ def build_action_plan(signal):
     return "Reduce or avoid; price-floor alignment is weak."
 
 
-def build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, window_name):
+def build_signal_sheet(snapshot, floor_symbol, pressure, broker_stats, sector, window_name):
     x = snapshot.copy()
     x = x.merge(floor_symbol, on="Symbol", how="left")
     x = x.merge(pressure, on="Symbol", how="left")
-    x = x.merge(sector, on="Symbol", how="left")
-
-    if bs_window.empty:
-        broker_stats = pd.DataFrame(columns=["Symbol", "Accum_Brokers", "Dist_Brokers", "Active_Brokers"])
-    else:
-        broker_stats = bs_window.groupby("Symbol", as_index=False).agg(
-            Accum_Brokers=("Net_Qty", lambda s: int((s > 0).sum())),
-            Dist_Brokers=("Net_Qty", lambda s: int((s < 0).sum())),
-            Active_Brokers=("Broker", "nunique"),
-        )
-
     x = x.merge(broker_stats, on="Symbol", how="left")
+    x = x.merge(sector, on="Symbol", how="left")
 
     for c in [
         "Trades", "Floor_Qty", "Floor_Amount", "Floor_VWAP", "Floor_Amount_Cr",
-        "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias",
-        "Accum_Brokers", "Dist_Brokers", "Active_Brokers"
+        "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias", "Accum_Brokers",
+        "Dist_Brokers", "Active_Brokers", "Broker_Balance"
     ]:
         if c not in x.columns:
             x[c] = np.nan
 
-    x["Broker_Balance"] = x["Accum_Brokers"].fillna(0) - x["Dist_Brokers"].fillna(0)
+    x["Above_Floor_VWAP"] = np.where(
+        x["Floor_VWAP"].notna() & x["Close"].notna(),
+        x["Close"] > x["Floor_VWAP"],
+        False,
+    )
 
     x = score_window(x, window_name)
     score_col = f"Score_{window_name}"
@@ -712,6 +867,7 @@ def build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, wind
     x.loc[x["Close_Pos"].fillna(0.5) <= 0.35, "RiskFlags"] += "WeakClose; "
     x.loc[x["UpperWickPct"].fillna(0) >= 0.45, "RiskFlags"] += "SupplyWick; "
     x.loc[x["Close"].fillna(0) < x["VWAP"].fillna(np.inf), "RiskFlags"] += "BelowVWAP; "
+    x.loc[x["Close"].fillna(0) <= x["Floor_VWAP"].fillna(np.inf), "RiskFlags"] += "BelowFloorVWAP; "
     x.loc[x["DistributionScore"].fillna(0) >= 70, "RiskFlags"] += "Distribution; "
 
     x["InsightReason"] = x.apply(lambda r: build_reason_row(r, window_name), axis=1)
@@ -720,6 +876,7 @@ def build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, wind
     out_cols = [
         "TradeDate", "Symbol", "Sector", "Company",
         signal_col, score_col,
+        "Above_Floor_VWAP",
         "Entry", "StopLoss", "Target1", "Target2", "Target3",
         "Close", "VWAP", "Floor_VWAP",
         "RET1_%", "RET3_%", "RET5_%", "RET7_%", "RET10_%", "RET15_%",
@@ -727,7 +884,7 @@ def build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, wind
         "HH5", "HH10", "HH15", "LL5", "LL10", "LL15",
         "Volume", "Vol_Surge", "Trades", "Floor_Qty", "Floor_Amount_Cr",
         "Buy_Pressure", "Sell_Pressure", "Net_Broker_Bias",
-        "Accum_Brokers", "Dist_Brokers", "Active_Brokers",
+        "Accum_Brokers", "Dist_Brokers", "Active_Brokers", "Broker_Balance",
         "RSI14", "ATR14", "ATR14_Pct", "RangePct", "Body_Pct", "Close_Pos",
         "UpperWickPct", "LowerWickPct", "Price_vs_VWAP_Pct",
         "AccumulationScore", "DistributionScore", "ShakeoutScore",
@@ -800,6 +957,17 @@ def style_sheet(ws):
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 
+def auto_fit_columns(ws, min_w=10, max_w=45):
+    for col in ws.columns:
+        mx = 0
+        letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value is None:
+                continue
+            mx = max(mx, len(str(cell.value)))
+        ws.column_dimensions[letter].width = max(min_w, min(max_w, mx + 2))
+
+
 def add_table_sheet(ws, df, name):
     if df.empty:
         df = pd.DataFrame([["No data"]], columns=["Info"])
@@ -823,17 +991,6 @@ def add_table_sheet(ws, df, name):
     )
     ws.add_table(tab)
     auto_fit_columns(ws)
-
-
-def auto_fit_columns(ws, min_w=10, max_w=45):
-    for col in ws.columns:
-        mx = 0
-        letter = get_column_letter(col[0].column)
-        for cell in col:
-            if cell.value is None:
-                continue
-            mx = max(mx, len(str(cell.value)))
-        ws.column_dimensions[letter].width = max(min_w, min(max_w, mx + 2))
 
 
 def color_scale(ws, col_name):
@@ -873,6 +1030,8 @@ def main():
     print("PRICE_DIR =", PRICE_DIR)
     print("FLOOR_DIR exists =", FLOOR_DIR.exists())
     print("PRICE_DIR exists =", PRICE_DIR.exists())
+    if FLOOR_DIR.exists():
+        print("FLOOR CSV files =", [p.name for p in FLOOR_DIR.glob("*.csv")][:10])
 
     floor_pairs = list_dated_files(FLOOR_DIR, FLOOR_RE)
     price_pairs = list_dated_files(PRICE_DIR, PRICE_RE)
@@ -921,17 +1080,29 @@ def main():
             Active_Days=("Active_Buy_Day", "sum"),
         )
     else:
-        bs_window = pd.DataFrame(columns=["Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Days"])
+        bs_window = pd.DataFrame(columns=[
+            "Symbol", "Broker", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Active_Days"
+        ])
 
     pressure = compute_pressure(bs_window, topn=5)
+    broker_stats = build_broker_stats(bs_window)
     snapshot = build_symbol_snapshot(pr)
 
-    signals_5d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "5D")
-    signals_10d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "10D")
-    signals_15d = build_signal_sheet(snapshot, floor_symbol, pressure, bs_window, sector, "15D")
+    early_smart = build_early_smart_money(snapshot, floor_symbol, pressure, broker_stats, sector)
+    signals_5d = build_signal_sheet(snapshot, floor_symbol, pressure, broker_stats, sector, "5D")
+    signals_10d = build_signal_sheet(snapshot, floor_symbol, pressure, broker_stats, sector, "10D")
+    signals_15d = build_signal_sheet(snapshot, floor_symbol, pressure, broker_stats, sector, "15D")
 
-    best_buy = signals_15d[signals_15d["Signal_15D"] == "BEST BUY"].copy().head(40)
-    buy_setups = signals_15d[signals_15d["Signal_15D"] == "BUY"].copy().head(80)
+    best_buy = signals_15d[
+        (signals_15d["Signal_15D"] == "BEST BUY") &
+        (signals_15d["Above_Floor_VWAP"] == True)
+    ].copy().head(40)
+
+    buy_setups = signals_15d[
+        (signals_15d["Signal_15D"] == "BUY") &
+        (signals_15d["Above_Floor_VWAP"] == True)
+    ].copy().head(80)
+
     hold_list = signals_15d[signals_15d["Signal_15D"] == "HOLD"].copy().head(120)
     sell_list = signals_15d[signals_15d["Signal_15D"] == "SELL"].copy().head(120)
 
@@ -944,12 +1115,14 @@ def main():
     readme = pd.DataFrame([
         ["Purpose", "OHLCV + Floor Sheet combined short-term signal report."],
         ["Signal windows", "5D = early, 10D = confirmation, 15D = primary decision."],
+        ["Early smart money", "EARLY ACCUMULATION/WATCH can appear before full BUY confirmation."],
+        ["Buy filter", "BUY / BEST BUY only if Close > Floor_VWAP."],
         ["Data needed", "At least 15 common trading days; extra price history loaded for RSI/ATR/MA calculations."],
         ["Floor source", str(FLOOR_DIR)],
         ["Price source", str(PRICE_DIR)],
         ["Sector source", str(SECTOR_FILE)],
-        ["Recommendation logic", "BEST BUY / BUY / HOLD / SELL using price trend + volume + floor pressure + broker behavior + sentiment."],
         ["Trade plan", "Entry=current close, StopLoss=min(LL5, Close-1.2*ATR14), targets at 1.5R / 2.5R / 3R."],
+        ["Auto-fit", "All sheets auto-fit column widths."],
         ["Path debug", f"Script root resolved to: {ROOT}"],
     ], columns=["Item", "Explanation"])
 
@@ -958,6 +1131,7 @@ def main():
 
     sheets = {
         "README": readme,
+        "Early_SmartMoney": early_smart,
         "Signals_5D": signals_5d,
         "Signals_10D": signals_10d,
         "Signals_15D": signals_15d,
@@ -971,6 +1145,7 @@ def main():
     }
 
     fmt_map = {
+        "EarlySmartScore": "0.00",
         "Score_5D": "0.00",
         "Score_10D": "0.00",
         "Score_15D": "0.00",
@@ -1011,6 +1186,11 @@ def main():
         "Accum_Brokers": "0",
         "Dist_Brokers": "0",
         "Active_Brokers": "0",
+        "Broker_Balance": "0",
+        "TopBuyerNet": "#,##0",
+        "TopSellerNetAbs": "#,##0",
+        "TopBuyerActiveDays": "0",
+        "TopSellerActiveDays": "0",
         "RSI14": "0.00",
         "ATR14": "0.00",
         "ATR14_Pct": "0.00",
@@ -1038,7 +1218,9 @@ def main():
         ws = wb.create_sheet(sheet_name[:31])
         add_table_sheet(ws, df, f"T{i}")
         number_format(ws, fmt_map)
+
         for c in [
+            "EarlySmartScore",
             "Score_5D", "Score_10D", "Score_15D",
             "Buy_Pressure", "Sell_Pressure", "Vol_Surge",
             "RET10_%", "AccumulationScore", "DistributionScore",
