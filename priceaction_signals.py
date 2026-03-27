@@ -1,6 +1,10 @@
 import re
 from pathlib import Path
 from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.utils import get_column_letter
 import numpy as np
 import pandas as pd
 
@@ -20,11 +24,7 @@ OHLC_PATTERN = "SharePrice_*.csv"
 OUTPUT_DIR = BASE_DIR / "outputs" / "PriceAction"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# fixed file name
-OUTPUT_FILE = OUTPUT_DIR / "nepse_signals_report.html"
-
-# if you want daily file instead, use this:
-# OUTPUT_FILE = OUTPUT_DIR / f"nepse_signals_report_{datetime.now().strftime('%Y-%m-%d')}.html"
+# Excel file name will match the screenshot style, e.g. nepse_signals_2026-03-27.xlsx
 
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
@@ -648,304 +648,184 @@ def build_long_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# HTML REPORT
+# EXCEL REPORT
 # =========================================================
-def prepare_short_html_df(df: pd.DataFrame) -> pd.DataFrame:
+SIGNAL_FILL_MAP = {
+    "STRONG BUY": "14532D",
+    "BUY": "166534",
+    "HOLD": "92400E",
+    "SELL": "991B1B",
+}
+
+HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
+HEADER_FONT = Font(color="FFFFFF", bold=True)
+THIN_BORDER = Border(
+    left=Side(style="thin", color="334155"),
+    right=Side(style="thin", color="334155"),
+    top=Side(style="thin", color="334155"),
+    bottom=Side(style="thin", color="334155"),
+)
+TITLE_FILL = PatternFill("solid", fgColor="0F172A")
+SECTION_FILL = PatternFill("solid", fgColor="1E293B")
+SUMMARY_FILL = PatternFill("solid", fgColor="E2E8F0")
+
+def sanitize_sheet_title(name: str) -> str:
+    invalid = set('[]:*?/\\')
+    cleaned = ''.join('_' if ch in invalid else ch for ch in name)
+    return cleaned[:31]
+
+def format_sheet_values(df: pd.DataFrame, kind: str) -> pd.DataFrame:
     out = df.copy()
-    out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
-    out["Open"] = out["Open"].map(format_num)
-    out["High"] = out["High"].map(format_num)
-    out["Low"] = out["Low"].map(format_num)
-    out["Close"] = out["Close"].map(format_num)
-    out["volume_fs"] = out["volume_fs"].map(lambda x: format_num(x, 0))
-    out["wap_fs"] = out["wap_fs"].map(format_num)
-    out["ma5"] = out["ma5"].map(format_num)
-    out["ma10"] = out["ma10"].map(format_num)
-    out["ret_3"] = out["ret_3"].map(format_pct)
-    out["ret_5"] = out["ret_5"].map(format_pct)
-    out["vol_ratio_10"] = out["vol_ratio_10"].map(format_num)
-    out["turnover_ratio_10"] = out["turnover_ratio_10"].map(format_num)
-    out["imbalance"] = out["imbalance"].map(format_num, na_action=None)
-    out["top_buyer_ratio"] = out["top_buyer_ratio"].map(format_pct)
-    out["top_seller_ratio"] = out["top_seller_ratio"].map(format_pct)
-    out["wap_strength_avg3"] = out["wap_strength_avg3"].map(format_pct)
-    out["short_signal"] = out["short_signal"].apply(signal_badge)
+    if "Date" in out.columns:
+        out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
+
+    two_dec_cols = {"Open", "High", "Low", "Close", "wap_fs", "ma5", "ma10", "ma20", "ma35", "ma50", "vol_ratio_10", "vol_ratio_20", "turnover_ratio_10", "turnover_ratio_20", "imbalance", "imbalance_avg20"}
+    int_cols = {"volume_fs", "num_trades", "confirm_3d_short", "confirm_5d_long", "breakout_5d", "breakout_20d", "short_score", "long_score"}
+    pct_cols = {"ret_3", "ret_5", "ret_10", "ret_20", "top_buyer_ratio", "top_seller_ratio", "top3_buyer_ratio", "top3_seller_ratio", "wap_strength_avg3", "wap_strength_avg5"}
+
+    for col in out.columns:
+        if col in two_dec_cols:
+            out[col] = out[col].map(format_num)
+        elif col in int_cols:
+            out[col] = out[col].map(lambda x: format_num(x, 0))
+        elif col in pct_cols:
+            out[col] = out[col].map(format_pct)
+
     return out
 
+def autofit_worksheet(ws):
+    for col_cells in ws.columns:
+        col_idx = col_cells[0].column
+        max_len = 0
+        for cell in col_cells:
+            val = "" if cell.value is None else str(cell.value)
+            if '\n' in val:
+                val = max(val.split('\n'), key=len)
+            max_len = max(max_len, len(val))
+        width = min(max(max_len + 2, 10), 60)
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-def prepare_long_html_df(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
-    out["Open"] = out["Open"].map(format_num)
-    out["High"] = out["High"].map(format_num)
-    out["Low"] = out["Low"].map(format_num)
-    out["Close"] = out["Close"].map(format_num)
-    out["volume_fs"] = out["volume_fs"].map(lambda x: format_num(x, 0))
-    out["wap_fs"] = out["wap_fs"].map(format_num)
-    out["ma20"] = out["ma20"].map(format_num)
-    out["ma35"] = out["ma35"].map(format_num)
-    out["ma50"] = out["ma50"].map(format_num)
-    out["ret_10"] = out["ret_10"].map(format_pct)
-    out["ret_20"] = out["ret_20"].map(format_pct)
-    out["vol_ratio_20"] = out["vol_ratio_20"].map(format_num)
-    out["turnover_ratio_20"] = out["turnover_ratio_20"].map(format_num)
-    out["imbalance_avg20"] = out["imbalance_avg20"].map(format_num, na_action=None)
-    out["top3_buyer_ratio"] = out["top3_buyer_ratio"].map(format_pct)
-    out["top3_seller_ratio"] = out["top3_seller_ratio"].map(format_pct)
-    out["wap_strength_avg5"] = out["wap_strength_avg5"].map(format_pct)
-    out["long_signal"] = out["long_signal"].apply(signal_badge)
-    return out
+def style_header_row(ws, row_idx: int):
+    for cell in ws[row_idx]:
+        if cell.value is None:
+            continue
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
 
+def apply_body_style(ws, start_row: int, end_row: int, signal_col_name: str | None = None):
+    headers = {cell.value: cell.column for cell in ws[start_row - 1] if cell.value is not None}
+    signal_col = headers.get(signal_col_name) if signal_col_name else None
 
-def dataframe_to_html_table(df: pd.DataFrame, table_id: str) -> str:
-    return df.to_html(index=False, escape=False, table_id=table_id, classes="report-table")
+    for r in range(start_row, end_row + 1):
+        fill_color = "111827" if (r - start_row) % 2 == 0 else "0B1220"
+        for c in range(1, ws.max_column + 1):
+            cell = ws.cell(r, c)
+            cell.fill = PatternFill("solid", fgColor=fill_color)
+            cell.font = Font(color="E5E7EB")
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = THIN_BORDER
 
+        if signal_col:
+            signal_cell = ws.cell(r, signal_col)
+            signal = str(signal_cell.value).strip().upper()
+            if signal in SIGNAL_FILL_MAP:
+                signal_cell.fill = PatternFill("solid", fgColor=SIGNAL_FILL_MAP[signal])
+                signal_cell.font = Font(color="FFFFFF", bold=True)
+                signal_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-def build_html_report(short_df: pd.DataFrame, long_df: pd.DataFrame) -> str:
-    short_html_df = prepare_short_html_df(short_df)
-    long_html_df = prepare_long_html_df(long_df)
+def add_table(ws, start_row: int, end_row: int, display_name: str):
+    ref = f"A{start_row}:{get_column_letter(ws.max_column)}{end_row}"
+    table = Table(displayName=display_name, ref=ref)
+    style = TableStyleInfo(name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False, showRowStripes=False, showColumnStripes=False)
+    table.tableStyleInfo = style
+    ws.add_table(table)
 
-    report_date = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+def write_section_table(ws, start_row: int, title: str, df: pd.DataFrame, table_name: str, signal_column: str):
+    last_col = get_column_letter(max(1, len(df.columns)))
+    ws.merge_cells(f"A{start_row}:{last_col}{start_row}")
+    title_cell = ws.cell(start_row, 1, title)
+    title_cell.fill = SECTION_FILL
+    title_cell.font = Font(color="FFFFFF", bold=True, size=14)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    header_row = start_row + 1
+    for c_idx, col in enumerate(df.columns, start=1):
+        ws.cell(header_row, c_idx, col)
+    style_header_row(ws, header_row)
+
+    for r_offset, row in enumerate(df.itertuples(index=False), start=1):
+        for c_idx, value in enumerate(row, start=1):
+            ws.cell(header_row + r_offset, c_idx, value)
+
+    data_start = header_row + 1
+    data_end = header_row + len(df)
+    if len(df) > 0:
+        apply_body_style(ws, data_start, data_end, signal_column)
+        add_table(ws, header_row, data_end, table_name)
+
+    return data_end + 2
+
+def create_excel_report(short_df: pd.DataFrame, long_df: pd.DataFrame, output_dir: Path) -> Path:
+    latest_date = None
+    for frame in (short_df, long_df):
+        if not frame.empty and "Date" in frame.columns:
+            latest_date = pd.to_datetime(frame["Date"]).max()
+            break
+    if latest_date is None:
+        latest_date = pd.Timestamp(datetime.now().date())
+
+    output_file = output_dir / f"nepse_signals_{latest_date.strftime('%Y-%m-%d')}.xlsx"
+
+    short_fmt = format_sheet_values(short_df, "short")
+    long_fmt = format_sheet_values(long_df, "long")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sanitize_sheet_title(latest_date.strftime("%Y-%m-%d"))
+    ws.sheet_view.showGridLines = False
+
+    max_cols = max(len(short_fmt.columns), len(long_fmt.columns), 4)
+    last_col = get_column_letter(max_cols)
+
+    ws.merge_cells(f"A1:{last_col}1")
+    ws["A1"] = "NEPSE Price Action Report"
+    ws["A1"].fill = TITLE_FILL
+    ws["A1"].font = Font(color="FFFFFF", bold=True, size=18)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.merge_cells(f"A2:{last_col}2")
+    ws["A2"] = f"Daily floorsheet + market overview + price action report ({datetime.now().strftime('%I:%M %p')})"
+    ws["A2"].fill = TITLE_FILL
+    ws["A2"].font = Font(color="CBD5E1", italic=True, size=11)
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
 
     short_counts = short_df["short_signal"].value_counts().to_dict() if not short_df.empty else {}
     long_counts = long_df["long_signal"].value_counts().to_dict() if not long_df.empty else {}
 
-    short_summary = (
-        f"STRONG BUY: {short_counts.get('STRONG BUY', 0)} | "
-        f"BUY: {short_counts.get('BUY', 0)} | "
-        f"HOLD: {short_counts.get('HOLD', 0)} | "
-        f"SELL: {short_counts.get('SELL', 0)}"
-    )
+    ws["A4"] = "Short-Term Summary"
+    ws["A5"] = f"STRONG BUY: {short_counts.get('STRONG BUY', 0)} | BUY: {short_counts.get('BUY', 0)} | HOLD: {short_counts.get('HOLD', 0)} | SELL: {short_counts.get('SELL', 0)}"
+    ws["C4"] = "Long-Term Summary"
+    ws["C5"] = f"STRONG BUY: {long_counts.get('STRONG BUY', 0)} | BUY: {long_counts.get('BUY', 0)} | HOLD: {long_counts.get('HOLD', 0)} | SELL: {long_counts.get('SELL', 0)}"
+    for cell_ref in ("A4", "C4"):
+        ws[cell_ref].font = Font(bold=True, color="0F172A")
+        ws[cell_ref].fill = SUMMARY_FILL
+    for cell_ref in ("A5", "C5"):
+        ws[cell_ref].alignment = Alignment(wrap_text=True)
 
-    long_summary = (
-        f"STRONG BUY: {long_counts.get('STRONG BUY', 0)} | "
-        f"BUY: {long_counts.get('BUY', 0)} | "
-        f"HOLD: {long_counts.get('HOLD', 0)} | "
-        f"SELL: {long_counts.get('SELL', 0)}"
-    )
+    next_row = 7
+    next_row = write_section_table(ws, next_row, "Short-Term Signals", short_fmt, "ShortTermSignals", "short_signal")
+    next_row = write_section_table(ws, next_row, "Long-Term Signals", long_fmt, "LongTermSignals", "long_signal")
 
-    short_table = dataframe_to_html_table(short_html_df, "short_term_table")
-    long_table = dataframe_to_html_table(long_html_df, "long_term_table")
+    ws.freeze_panes = "A8"
+    autofit_worksheet(ws)
+    ws.row_dimensions[1].height = 24
+    ws.row_dimensions[2].height = 20
 
-    html = f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NEPSE Price Action Report</title>
-<style>
-    body {{
-        font-family: Arial, sans-serif;
-        background: #0f172a;
-        color: #e2e8f0;
-        margin: 0;
-        padding: 24px;
-    }}
+    wb.save(output_file)
+    return output_file
 
-    .container {{
-        max-width: 1800px;
-        margin: 0 auto;
-    }}
-
-    .header {{
-        background: linear-gradient(135deg, #1e293b, #0f172a);
-        border: 1px solid #334155;
-        border-radius: 14px;
-        padding: 20px 24px;
-        margin-bottom: 24px;
-    }}
-
-    .title {{
-        margin: 0;
-        font-size: 28px;
-        font-weight: 700;
-        color: #f8fafc;
-    }}
-
-    .subtitle {{
-        margin-top: 8px;
-        color: #94a3b8;
-        font-size: 14px;
-    }}
-
-    .summary-grid {{
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        margin-bottom: 24px;
-    }}
-
-    .card {{
-        background: #111827;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 18px;
-    }}
-
-    .card h3 {{
-        margin: 0 0 10px 0;
-        color: #f8fafc;
-        font-size: 18px;
-    }}
-
-    .card p {{
-        margin: 0;
-        color: #cbd5e1;
-        line-height: 1.6;
-    }}
-
-    .section {{
-        margin-bottom: 28px;
-    }}
-
-    .section h2 {{
-        margin: 0 0 12px 0;
-        font-size: 22px;
-        color: #f8fafc;
-    }}
-
-    .table-wrap {{
-        background: #111827;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 14px;
-        overflow-x: auto;
-    }}
-
-    table.report-table {{
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-        min-width: 1400px;
-    }}
-
-    table.report-table thead th {{
-        background: #1f4e78;
-        color: white;
-        padding: 10px 8px;
-        border: 1px solid #334155;
-        text-align: left;
-        position: sticky;
-        top: 0;
-    }}
-
-    table.report-table tbody td {{
-        padding: 8px;
-        border: 1px solid #334155;
-        color: #e5e7eb;
-        vertical-align: top;
-    }}
-
-    table.report-table tbody tr:nth-child(even) {{
-        background: #0b1220;
-    }}
-
-    table.report-table tbody tr:nth-child(odd) {{
-        background: #111827;
-    }}
-
-    .badge {{
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.2px;
-        white-space: nowrap;
-    }}
-
-    .strong-buy {{
-        background: #14532d;
-        color: #dcfce7;
-    }}
-
-    .buy {{
-        background: #166534;
-        color: #dcfce7;
-    }}
-
-    .hold {{
-        background: #92400e;
-        color: #fef3c7;
-    }}
-
-    .sell {{
-        background: #991b1b;
-        color: #fee2e2;
-    }}
-
-    .neutral {{
-        background: #475569;
-        color: #f8fafc;
-    }}
-
-    .footer {{
-        margin-top: 24px;
-        color: #94a3b8;
-        font-size: 12px;
-        text-align: center;
-    }}
-
-    @media (max-width: 900px) {{
-        .summary-grid {{
-            grid-template-columns: 1fr;
-        }}
-    }}
-</style>
-</head>
-<body>
-<div class="container">
-
-    <div class="header">
-        <h1 class="title">NEPSE Price Action Report</h1>
-        <div class="subtitle">Generated on {report_date}</div>
-    </div>
-
-    <div class="summary-grid">
-        <div class="card">
-            <h3>Short-Term Summary</h3>
-            <p>{short_summary}</p>
-        </div>
-        <div class="card">
-            <h3>Long-Term Summary</h3>
-            <p>{long_summary}</p>
-        </div>
-    </div>
-
-    <div class="section">
-        <h2>Short-Term Signals</h2>
-        <div class="table-wrap">
-            {short_table}
-        </div>
-    </div>
-
-    <div class="section">
-        <h2>Long-Term Signals</h2>
-        <div class="table-wrap">
-            {long_table}
-        </div>
-    </div>
-
-    <div class="footer">
-        Auto-generated from share price OHLC and floor-sheet-based volume, WAP, and broker activity.
-    </div>
-
-</div>
-</body>
-</html>
-"""
-    return html
-
-
-def save_html_report(html_content: str, output_file: Path):
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-
-# =========================================================
-# MAIN
-# =========================================================
 def main():
     ohlc = load_ohlc_data(OHLC_DIR)
     floor = load_floor_sheet_data(FLOOR_DIR)
@@ -965,8 +845,8 @@ def main():
     short_sheet = build_short_sheet(latest)
     long_sheet = build_long_sheet(latest)
 
-    html_report = build_html_report(short_sheet, long_sheet)
-    save_html_report(html_report, OUTPUT_FILE)
+    output_file = create_excel_report(short_sheet, long_sheet, OUTPUT_DIR)
+    print(f"Saved Excel report: {output_file}")
 
 
 if __name__ == "__main__":
