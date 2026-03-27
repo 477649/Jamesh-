@@ -593,13 +593,14 @@ def latest_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_short_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
     cols = [
-        "Date", "Symbol", "Sector", "Company", "Open", "High", "Low", "Close",
+        "Date", "Symbol", "Sector", "Company", "short_signal",
+        "Open", "High", "Low", "Close",
         "volume_fs", "wap_fs", "num_trades",
         "ma5", "ma10", "ret_3", "ret_5",
         "vol_ratio_10", "turnover_ratio_10",
         "imbalance", "top_buyer_ratio", "top_seller_ratio",
         "confirm_3d_short", "wap_strength_avg3", "breakout_5d",
-        "short_score", "short_signal", "short_insight", "short_why"
+        "short_score", "short_insight", "short_why"
     ]
     out = df_latest[[c for c in cols if c in df_latest.columns]].copy()
     return out.sort_values(["short_score", "Symbol"], ascending=[False, True])
@@ -607,13 +608,14 @@ def build_short_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
 
 def build_long_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
     cols = [
-        "Date", "Symbol", "Sector", "Company", "Open", "High", "Low", "Close",
+        "Date", "Symbol", "Sector", "Company", "long_signal",
+        "Open", "High", "Low", "Close",
         "volume_fs", "wap_fs", "num_trades",
         "ma20", "ma35", "ma50", "ret_10", "ret_20",
         "vol_ratio_20", "turnover_ratio_20",
         "imbalance_avg20", "top3_buyer_ratio", "top3_seller_ratio",
         "confirm_5d_long", "wap_strength_avg5", "breakout_20d",
-        "long_score", "long_signal", "long_insight", "long_why"
+        "long_score", "long_insight", "long_why"
     ]
     out = df_latest[[c for c in cols if c in df_latest.columns]].copy()
     return out.sort_values(["long_score", "Symbol"], ascending=[False, True])
@@ -722,19 +724,29 @@ def add_table(ws, start_row: int, end_row: int, display_name: str):
 
 
 def autofit_worksheet(ws):
+    row_metrics = {}
+
     for col_cells in ws.columns:
         col_idx = col_cells[0].column
         max_len = 0
+
         for cell in col_cells:
             val = "" if cell.value is None else str(cell.value)
-            longest = max(val.split("\n"), key=len) if "\n" in val else val
+            lines = val.split("\n") if val else [""]
+            longest = max(lines, key=len)
             max_len = max(max_len, len(longest))
-            if cell.row > 1:
-                lines = max(1, len(val.split("\n")))
-                current_height = ws.row_dimensions[cell.row].height or 15
-                ws.row_dimensions[cell.row].height = max(current_height, min(15 * lines + 6, 90))
+
+            line_count = max(1, len(lines))
+            approx_extra_lines = max(0, len(longest) // 35)
+            needed_lines = line_count + approx_extra_lines
+            row_metrics[cell.row] = max(row_metrics.get(cell.row, 1), needed_lines)
+
         width = min(max(max_len + 2, 10), 60)
         ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    for row_idx, needed_lines in row_metrics.items():
+        base_height = 18 if row_idx == 1 else 15
+        ws.row_dimensions[row_idx].height = min(max(base_height, needed_lines * 15 + 6), 90)
 
 
 def create_summary_sheet(wb, latest_date, short_df, long_df):
