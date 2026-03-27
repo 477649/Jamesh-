@@ -1,12 +1,8 @@
 import re
 from pathlib import Path
+from datetime import datetime
 import numpy as np
 import pandas as pd
-
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.styles import PatternFill, Font, Alignment
 
 # =========================================================
 # CONFIG
@@ -20,10 +16,15 @@ SECTOR_FILE = BASE_DIR / "outputs" / "Sector" / "sector_master.csv"
 FLOOR_PATTERN = "floorsheet_*.csv"
 OHLC_PATTERN = "SharePrice_*.csv"
 
-OUTPUT_DIR = BASE_DIR / "model_outputs"
+# OUTPUT LOCATION YOU REQUESTED
+OUTPUT_DIR = BASE_DIR / "outputs" / "PriceAction"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-OUTPUT_FILE = OUTPUT_DIR / "nepse_signals_short_long.xlsx"
+# fixed file name
+OUTPUT_FILE = OUTPUT_DIR / "nepse_signals_report.html"
+
+# if you want daily file instead, use this:
+# OUTPUT_FILE = OUTPUT_DIR / f"nepse_signals_report_{datetime.now().strftime('%Y-%m-%d')}.html"
 
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
@@ -80,6 +81,31 @@ def join_reasons(reasons):
     return " | ".join(reasons) if reasons else "No strong confirmation"
 
 
+def format_num(x, decimals=2):
+    if pd.isna(x):
+        return ""
+    return f"{x:.{decimals}f}"
+
+
+def format_pct(x, decimals=2):
+    if pd.isna(x):
+        return ""
+    return f"{x * 100:.{decimals}f}%"
+
+
+def signal_badge(signal: str) -> str:
+    signal = str(signal).strip().upper()
+    if signal == "STRONG BUY":
+        return '<span class="badge strong-buy">STRONG BUY</span>'
+    if signal == "BUY":
+        return '<span class="badge buy">BUY</span>'
+    if signal == "HOLD":
+        return '<span class="badge hold">HOLD</span>'
+    if signal == "SELL":
+        return '<span class="badge sell">SELL</span>'
+    return f'<span class="badge neutral">{signal}</span>'
+
+
 # =========================================================
 # LOAD SHARE PRICE DATA
 # ONLY TAKE: Symbol, Open, High, Low, Close
@@ -96,7 +122,6 @@ def load_ohlc_data(ohlc_dir: Path) -> pd.DataFrame:
         df = safe_read_csv(f)
         missing = required_cols - set(df.columns)
         if missing:
-            print(f"[WARN] Skipping {f.name}; missing columns: {missing}")
             continue
 
         df = df.copy()
@@ -108,7 +133,6 @@ def load_ohlc_data(ohlc_dir: Path) -> pd.DataFrame:
         df = standardize_symbol(df, "Symbol")
         df = df[["Date", "Symbol", "Open", "High", "Low", "Close"]]
         df = df.dropna(subset=["Date", "Symbol", "Close"])
-
         frames.append(df)
 
     if not frames:
@@ -134,7 +158,6 @@ def load_floor_sheet_data(floor_dir: Path) -> pd.DataFrame:
         df = safe_read_csv(f)
         missing = required_cols - set(df.columns)
         if missing:
-            print(f"[WARN] Skipping {f.name}; missing columns: {missing}")
             continue
 
         df = df.copy()
@@ -176,10 +199,8 @@ def load_sector_master(sector_file: Path) -> pd.DataFrame:
 
 # =========================================================
 # FLOOR SHEET AGGREGATION
-# VOLUME IS TAKEN FROM FLOOR SHEET:
-# volume_fs = sum(Quantity)
-# VWAP / WAP IS TAKEN FROM FLOOR SHEET:
-# wap_fs = sum(Amount) / sum(Quantity)
+# VOLUME FROM FLOOR SHEET
+# WAP / VWAP FROM FLOOR SHEET
 # =========================================================
 def compute_broker_concentration(group: pd.DataFrame) -> pd.Series:
     total_qty = group["Quantity"].sum()
@@ -218,9 +239,8 @@ def aggregate_floor_sheet_daily(floor: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
-    # DAY-WISE VWAP / WAP FROM FLOOR SHEET
+    # day-wise WAP from floor sheet
     agg["wap_fs"] = safe_div(agg["turnover_fs"], agg["volume_fs"])
-
     agg["avg_trade_size"] = safe_div(agg["volume_fs"], agg["num_trades"])
 
     broker = floor.groupby(["Date", "Symbol"]).apply(compute_broker_concentration).reset_index()
@@ -254,14 +274,14 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     for w in [3, 5, 10, 20]:
         df[f"ret_{w}"] = g["Close"].transform(lambda s, w=w: s.pct_change(w))
 
-    # Rolling averages for FLOOR SHEET VOLUME and other floor sheet data
+    # Rolling averages for floor-sheet data
     for w in [10, 20]:
         df[f"vol_fs_avg{w}"] = g["volume_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"turnover_fs_avg{w}"] = g["turnover_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"num_trades_avg{w}"] = g["num_trades"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"imbalance_avg{w}"] = g["imbalance"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
 
-    # Ratios using FLOOR SHEET VOLUME
+    # Ratios using floor-sheet volume
     df["vol_ratio_10"] = safe_div(df["volume_fs"], df["vol_fs_avg10"])
     df["vol_ratio_20"] = safe_div(df["volume_fs"], df["vol_fs_avg20"])
     df["turnover_ratio_10"] = safe_div(df["turnover_fs"], df["turnover_fs_avg10"])
@@ -269,7 +289,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["num_trades_ratio_10"] = safe_div(df["num_trades"], df["num_trades_avg10"])
     df["num_trades_ratio_20"] = safe_div(df["num_trades"], df["num_trades_avg20"])
 
-    # WAP / VWAP strength from FLOOR SHEET WAP
+    # WAP strength from floor-sheet WAP
     df["wap_diff"] = df["Close"] - df["wap_fs"]
     df["wap_strength"] = safe_div(df["wap_diff"], df["wap_fs"])
 
@@ -316,7 +336,6 @@ def short_term_score_and_reason(row):
     reasons = []
     negative_reasons = []
 
-    # Liquidity from FLOOR SHEET VOLUME
     if pd.notna(row["volume_fs"]) and row["volume_fs"] >= MIN_VOLUME_FS:
         score += 1
         reasons.append("Good liquidity from floor-sheet volume")
@@ -329,7 +348,6 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("Low number of trades")
 
-    # Trend / momentum
     if pd.notna(row["ma5"]) and row["Close"] > row["ma5"]:
         score += 1
         reasons.append("Close is above MA5")
@@ -354,7 +372,6 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("5-day momentum is weak")
 
-    # Participation from FLOOR SHEET VOLUME
     if pd.notna(row["vol_ratio_10"]) and row["vol_ratio_10"] > 1.15:
         score += 1
         reasons.append("Floor-sheet volume is above 10-day average")
@@ -373,7 +390,6 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("Trade count is not expanding")
 
-    # WAP and broker behavior from FLOOR SHEET
     if pd.notna(row["wap_fs"]) and row["Close"] > row["wap_fs"]:
         score += 2
         reasons.append("Close is above floor-sheet WAP, buyers controlled the session")
@@ -392,7 +408,6 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("Top buyer broker concentration is not strong")
 
-    # Multi-day confirmation
     if pd.notna(row["confirm_3d_short"]) and row["confirm_3d_short"] >= 2:
         score += 2
         reasons.append("At least 2 of the last 3 sessions confirmed bullish conditions")
@@ -411,7 +426,6 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("No 5-day breakout")
 
-    # Distribution override
     if (
         pd.notna(row["wap_fs"]) and row["wap_fs"] > row["Close"]
         and pd.notna(row["top_sell_persist_3"]) and row["top_sell_persist_3"] > 0.28
@@ -449,7 +463,6 @@ def long_term_score_and_reason(row):
     reasons = []
     negative_reasons = []
 
-    # Liquidity from FLOOR SHEET VOLUME
     if pd.notna(row["volume_fs"]) and row["volume_fs"] >= MIN_VOLUME_FS:
         score += 1
         reasons.append("Good liquidity from floor-sheet volume")
@@ -462,7 +475,6 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("Low number of trades")
 
-    # Trend
     if pd.notna(row["ma20"]) and row["Close"] > row["ma20"]:
         score += 2
         reasons.append("Close is above MA20")
@@ -481,7 +493,6 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("Close is below MA50")
 
-    # Momentum
     if pd.notna(row["ret_10"]) and row["ret_10"] > 0:
         score += 2
         reasons.append("10-day momentum is positive")
@@ -494,7 +505,6 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("20-day momentum is weak")
 
-    # Participation from FLOOR SHEET VOLUME
     if pd.notna(row["vol_ratio_20"]) and row["vol_ratio_20"] > 1.10:
         score += 1
         reasons.append("Floor-sheet volume is above 20-day average")
@@ -507,7 +517,6 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("Turnover is not strong vs 20-day average")
 
-    # WAP / broker persistence
     if pd.notna(row["wap_fs"]) and row["Close"] > row["wap_fs"]:
         score += 1
         reasons.append("Close is above floor-sheet WAP")
@@ -520,13 +529,16 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("20-day broker imbalance is not positive")
 
-    if pd.notna(row["top3_buyer_ratio"]) and pd.notna(row["top3_seller_ratio"]) and row["top3_buyer_ratio"] > row["top3_seller_ratio"]:
+    if (
+        pd.notna(row["top3_buyer_ratio"])
+        and pd.notna(row["top3_seller_ratio"])
+        and row["top3_buyer_ratio"] > row["top3_seller_ratio"]
+    ):
         score += 1
         reasons.append("Top 3 buyer brokers are stronger than top 3 seller brokers")
     else:
         negative_reasons.append("Top 3 buyer brokers are not dominating")
 
-    # Multi-day confirmation
     if pd.notna(row["confirm_5d_long"]) and row["confirm_5d_long"] >= 3:
         score += 2
         reasons.append("At least 3 of the last 5 sessions confirmed bullish conditions")
@@ -545,7 +557,6 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("No 20-day breakout")
 
-    # Distribution override
     if (
         pd.notna(row["wap_fs"]) and row["wap_fs"] > row["Close"]
         and pd.notna(row["top3_seller_ratio"]) and row["top3_seller_ratio"] > 0.55
@@ -637,114 +648,315 @@ def build_long_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# EXCEL HELPERS
+# HTML REPORT
 # =========================================================
-def autofit_worksheet(ws):
-    for column_cells in ws.columns:
-        max_length = 0
-        col_letter = column_cells[0].column_letter
-
-        for cell in column_cells:
-            try:
-                value = "" if cell.value is None else str(cell.value)
-                max_length = max(max_length, len(value))
-            except Exception:
-                pass
-
-        ws.column_dimensions[col_letter].width = min(max(max_length + 2, 10), 55)
-
-
-def style_header(ws):
-    fill = PatternFill("solid", fgColor="1F4E78")
-    font = Font(color="FFFFFF", bold=True)
-    align = Alignment(horizontal="center", vertical="center")
-
-    for cell in ws[1]:
-        cell.fill = fill
-        cell.font = font
-        cell.alignment = align
+def prepare_short_html_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
+    out["Open"] = out["Open"].map(format_num)
+    out["High"] = out["High"].map(format_num)
+    out["Low"] = out["Low"].map(format_num)
+    out["Close"] = out["Close"].map(format_num)
+    out["volume_fs"] = out["volume_fs"].map(lambda x: format_num(x, 0))
+    out["wap_fs"] = out["wap_fs"].map(format_num)
+    out["ma5"] = out["ma5"].map(format_num)
+    out["ma10"] = out["ma10"].map(format_num)
+    out["ret_3"] = out["ret_3"].map(format_pct)
+    out["ret_5"] = out["ret_5"].map(format_pct)
+    out["vol_ratio_10"] = out["vol_ratio_10"].map(format_num)
+    out["turnover_ratio_10"] = out["turnover_ratio_10"].map(format_num)
+    out["imbalance"] = out["imbalance"].map(format_num, na_action=None)
+    out["top_buyer_ratio"] = out["top_buyer_ratio"].map(format_pct)
+    out["top_seller_ratio"] = out["top_seller_ratio"].map(format_pct)
+    out["wap_strength_avg3"] = out["wap_strength_avg3"].map(format_pct)
+    out["short_signal"] = out["short_signal"].apply(signal_badge)
+    return out
 
 
-def add_excel_table(ws, df: pd.DataFrame, table_name: str):
-    from openpyxl.utils import get_column_letter
+def prepare_long_html_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
+    out["Open"] = out["Open"].map(format_num)
+    out["High"] = out["High"].map(format_num)
+    out["Low"] = out["Low"].map(format_num)
+    out["Close"] = out["Close"].map(format_num)
+    out["volume_fs"] = out["volume_fs"].map(lambda x: format_num(x, 0))
+    out["wap_fs"] = out["wap_fs"].map(format_num)
+    out["ma20"] = out["ma20"].map(format_num)
+    out["ma35"] = out["ma35"].map(format_num)
+    out["ma50"] = out["ma50"].map(format_num)
+    out["ret_10"] = out["ret_10"].map(format_pct)
+    out["ret_20"] = out["ret_20"].map(format_pct)
+    out["vol_ratio_20"] = out["vol_ratio_20"].map(format_num)
+    out["turnover_ratio_20"] = out["turnover_ratio_20"].map(format_num)
+    out["imbalance_avg20"] = out["imbalance_avg20"].map(format_num, na_action=None)
+    out["top3_buyer_ratio"] = out["top3_buyer_ratio"].map(format_pct)
+    out["top3_seller_ratio"] = out["top3_seller_ratio"].map(format_pct)
+    out["wap_strength_avg5"] = out["wap_strength_avg5"].map(format_pct)
+    out["long_signal"] = out["long_signal"].apply(signal_badge)
+    return out
 
-    if df.empty:
-        return
 
-    last_row = len(df) + 1
-    last_col = len(df.columns)
-    ref = f"A1:{get_column_letter(last_col)}{last_row}"
+def dataframe_to_html_table(df: pd.DataFrame, table_id: str) -> str:
+    return df.to_html(index=False, escape=False, table_id=table_id, classes="report-table")
 
-    tab = Table(displayName=table_name, ref=ref)
-    style = TableStyleInfo(
-        name="TableStyleMedium9",
-        showFirstColumn=False,
-        showLastColumn=False,
-        showRowStripes=True,
-        showColumnStripes=False
+
+def build_html_report(short_df: pd.DataFrame, long_df: pd.DataFrame) -> str:
+    short_html_df = prepare_short_html_df(short_df)
+    long_html_df = prepare_long_html_df(long_df)
+
+    report_date = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+
+    short_counts = short_df["short_signal"].value_counts().to_dict() if not short_df.empty else {}
+    long_counts = long_df["long_signal"].value_counts().to_dict() if not long_df.empty else {}
+
+    short_summary = (
+        f"STRONG BUY: {short_counts.get('STRONG BUY', 0)} | "
+        f"BUY: {short_counts.get('BUY', 0)} | "
+        f"HOLD: {short_counts.get('HOLD', 0)} | "
+        f"SELL: {short_counts.get('SELL', 0)}"
     )
-    tab.tableStyleInfo = style
-    ws.add_table(tab)
+
+    long_summary = (
+        f"STRONG BUY: {long_counts.get('STRONG BUY', 0)} | "
+        f"BUY: {long_counts.get('BUY', 0)} | "
+        f"HOLD: {long_counts.get('HOLD', 0)} | "
+        f"SELL: {long_counts.get('SELL', 0)}"
+    )
+
+    short_table = dataframe_to_html_table(short_html_df, "short_term_table")
+    long_table = dataframe_to_html_table(long_html_df, "long_term_table")
+
+    html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEPSE Price Action Report</title>
+<style>
+    body {{
+        font-family: Arial, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        margin: 0;
+        padding: 24px;
+    }}
+
+    .container {{
+        max-width: 1800px;
+        margin: 0 auto;
+    }}
+
+    .header {{
+        background: linear-gradient(135deg, #1e293b, #0f172a);
+        border: 1px solid #334155;
+        border-radius: 14px;
+        padding: 20px 24px;
+        margin-bottom: 24px;
+    }}
+
+    .title {{
+        margin: 0;
+        font-size: 28px;
+        font-weight: 700;
+        color: #f8fafc;
+    }}
+
+    .subtitle {{
+        margin-top: 8px;
+        color: #94a3b8;
+        font-size: 14px;
+    }}
+
+    .summary-grid {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 24px;
+    }}
+
+    .card {{
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 18px;
+    }}
+
+    .card h3 {{
+        margin: 0 0 10px 0;
+        color: #f8fafc;
+        font-size: 18px;
+    }}
+
+    .card p {{
+        margin: 0;
+        color: #cbd5e1;
+        line-height: 1.6;
+    }}
+
+    .section {{
+        margin-bottom: 28px;
+    }}
+
+    .section h2 {{
+        margin: 0 0 12px 0;
+        font-size: 22px;
+        color: #f8fafc;
+    }}
+
+    .table-wrap {{
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 14px;
+        overflow-x: auto;
+    }}
+
+    table.report-table {{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        min-width: 1400px;
+    }}
+
+    table.report-table thead th {{
+        background: #1f4e78;
+        color: white;
+        padding: 10px 8px;
+        border: 1px solid #334155;
+        text-align: left;
+        position: sticky;
+        top: 0;
+    }}
+
+    table.report-table tbody td {{
+        padding: 8px;
+        border: 1px solid #334155;
+        color: #e5e7eb;
+        vertical-align: top;
+    }}
+
+    table.report-table tbody tr:nth-child(even) {{
+        background: #0b1220;
+    }}
+
+    table.report-table tbody tr:nth-child(odd) {{
+        background: #111827;
+    }}
+
+    .badge {{
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+    }}
+
+    .strong-buy {{
+        background: #14532d;
+        color: #dcfce7;
+    }}
+
+    .buy {{
+        background: #166534;
+        color: #dcfce7;
+    }}
+
+    .hold {{
+        background: #92400e;
+        color: #fef3c7;
+    }}
+
+    .sell {{
+        background: #991b1b;
+        color: #fee2e2;
+    }}
+
+    .neutral {{
+        background: #475569;
+        color: #f8fafc;
+    }}
+
+    .footer {{
+        margin-top: 24px;
+        color: #94a3b8;
+        font-size: 12px;
+        text-align: center;
+    }}
+
+    @media (max-width: 900px) {{
+        .summary-grid {{
+            grid-template-columns: 1fr;
+        }}
+    }}
+</style>
+</head>
+<body>
+<div class="container">
+
+    <div class="header">
+        <h1 class="title">NEPSE Price Action Report</h1>
+        <div class="subtitle">Generated on {report_date}</div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="card">
+            <h3>Short-Term Summary</h3>
+            <p>{short_summary}</p>
+        </div>
+        <div class="card">
+            <h3>Long-Term Summary</h3>
+            <p>{long_summary}</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Short-Term Signals</h2>
+        <div class="table-wrap">
+            {short_table}
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Long-Term Signals</h2>
+        <div class="table-wrap">
+            {long_table}
+        </div>
+    </div>
+
+    <div class="footer">
+        Auto-generated from share price OHLC and floor-sheet-based volume, WAP, and broker activity.
+    </div>
+
+</div>
+</body>
+</html>
+"""
+    return html
 
 
-def write_df_to_sheet(ws, df: pd.DataFrame):
-    for row in dataframe_to_rows(df, index=False, header=True):
-        ws.append(row)
-
-
-def write_excel(short_df: pd.DataFrame, long_df: pd.DataFrame, output_file: Path):
-    wb = Workbook()
-
-    ws_short = wb.active
-    ws_short.title = "Short_Term"
-
-    ws_long = wb.create_sheet("Long_Term")
-
-    write_df_to_sheet(ws_short, short_df)
-    write_df_to_sheet(ws_long, long_df)
-
-    style_header(ws_short)
-    style_header(ws_long)
-
-    add_excel_table(ws_short, short_df, "ShortTermTable")
-    add_excel_table(ws_long, long_df, "LongTermTable")
-
-    ws_short.freeze_panes = "A2"
-    ws_long.freeze_panes = "A2"
-
-    autofit_worksheet(ws_short)
-    autofit_worksheet(ws_long)
-
-    wb.save(output_file)
-    print(f"Saved workbook: {output_file}")
+def save_html_report(html_content: str, output_file: Path):
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(html_content)
 
 
 # =========================================================
 # MAIN
 # =========================================================
 def main():
-    print("Loading share price data...")
     ohlc = load_ohlc_data(OHLC_DIR)
-
-    print("Loading floor sheet data...")
     floor = load_floor_sheet_data(FLOOR_DIR)
-
-    print("Loading sector master...")
     sector = load_sector_master(SECTOR_FILE)
 
-    print("Aggregating floor sheet...")
     floor_daily = aggregate_floor_sheet_daily(floor)
-
-    print("Building master dataset...")
     df = build_master_dataset(ohlc, floor_daily, sector)
-
-    print("Adding features...")
     df = add_features(df)
-
-    print("Applying short-term and long-term models...")
     df = apply_models(df)
 
-    # Keep rows with at least enough history for short-term features
+    # keep rows with at least enough history for short-term features
     valid_rows = df.groupby("Symbol").cumcount() + 1
     df_model = df.loc[valid_rows >= 20].copy()
 
@@ -753,13 +965,8 @@ def main():
     short_sheet = build_short_sheet(latest)
     long_sheet = build_long_sheet(latest)
 
-    write_excel(short_sheet, long_sheet, OUTPUT_FILE)
-
-    print("\nTop Short-Term Signals:")
-    print(short_sheet.head(10).to_string(index=False))
-
-    print("\nTop Long-Term Signals:")
-    print(long_sheet.head(10).to_string(index=False))
+    html_report = build_html_report(short_sheet, long_sheet)
+    save_html_report(html_report, OUTPUT_FILE)
 
 
 if __name__ == "__main__":
