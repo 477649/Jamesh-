@@ -76,16 +76,21 @@ def safe_div(a, b):
     return np.where((b != 0) & pd.notna(b), a / b, np.nan)
 
 
+def join_reasons(reasons):
+    return " | ".join(reasons) if reasons else "No strong confirmation"
+
+
 # =========================================================
-# LOAD DATA
+# LOAD SHARE PRICE DATA
+# ONLY TAKE: Symbol, Open, High, Low, Close
 # =========================================================
 def load_ohlc_data(ohlc_dir: Path) -> pd.DataFrame:
     files = sorted(ohlc_dir.glob(OHLC_PATTERN))
     if not files:
-        raise FileNotFoundError(f"No OHLC files found in {ohlc_dir}")
+        raise FileNotFoundError(f"No share price files found in {ohlc_dir}")
 
     frames = []
-    required_cols = {"Symbol", "Open", "High", "Low", "Close", "Volume", "VWAP"}
+    required_cols = {"Symbol", "Open", "High", "Low", "Close"}
 
     for f in files:
         df = safe_read_csv(f)
@@ -97,22 +102,26 @@ def load_ohlc_data(ohlc_dir: Path) -> pd.DataFrame:
         df = df.copy()
         df["Date"] = extract_date_from_filename(f)
 
-        for c in ["Open", "High", "Low", "Close", "Volume", "VWAP"]:
+        for c in ["Open", "High", "Low", "Close"]:
             df[c] = clean_numeric(df[c])
 
         df = standardize_symbol(df, "Symbol")
-        df = df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume", "VWAP"]]
+        df = df[["Date", "Symbol", "Open", "High", "Low", "Close"]]
         df = df.dropna(subset=["Date", "Symbol", "Close"])
+
         frames.append(df)
 
     if not frames:
-        raise ValueError("No valid OHLC data loaded.")
+        raise ValueError("No valid share price data loaded.")
 
     out = pd.concat(frames, ignore_index=True)
     out = out.sort_values(["Symbol", "Date"]).drop_duplicates(["Date", "Symbol"], keep="last")
     return out
 
 
+# =========================================================
+# LOAD FLOOR SHEET DATA
+# =========================================================
 def load_floor_sheet_data(floor_dir: Path) -> pd.DataFrame:
     files = sorted(floor_dir.glob(FLOOR_PATTERN))
     if not files:
@@ -137,7 +146,7 @@ def load_floor_sheet_data(floor_dir: Path) -> pd.DataFrame:
         for c in ["Quantity", "Rate", "Amount"]:
             df[c] = clean_numeric(df[c])
 
-        df = df.dropna(subset=["Date", "Symbol", "Quantity", "Rate", "Amount"])
+        df = df.dropna(subset=["Date", "Symbol", "Quantity", "Amount"])
         frames.append(df)
 
     if not frames:
@@ -148,6 +157,9 @@ def load_floor_sheet_data(floor_dir: Path) -> pd.DataFrame:
     return out
 
 
+# =========================================================
+# LOAD SECTOR MASTER
+# =========================================================
 def load_sector_master(sector_file: Path) -> pd.DataFrame:
     if not sector_file.exists():
         return pd.DataFrame(columns=["Symbol", "Sector", "Company"])
@@ -164,6 +176,10 @@ def load_sector_master(sector_file: Path) -> pd.DataFrame:
 
 # =========================================================
 # FLOOR SHEET AGGREGATION
+# VOLUME IS TAKEN FROM FLOOR SHEET:
+# volume_fs = sum(Quantity)
+# VWAP / WAP IS TAKEN FROM FLOOR SHEET:
+# wap_fs = sum(Amount) / sum(Quantity)
 # =========================================================
 def compute_broker_concentration(group: pd.DataFrame) -> pd.Series:
     total_qty = group["Quantity"].sum()
@@ -202,17 +218,20 @@ def aggregate_floor_sheet_daily(floor: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
+    # DAY-WISE VWAP / WAP FROM FLOOR SHEET
     agg["wap_fs"] = safe_div(agg["turnover_fs"], agg["volume_fs"])
+
     agg["avg_trade_size"] = safe_div(agg["volume_fs"], agg["num_trades"])
 
     broker = floor.groupby(["Date", "Symbol"]).apply(compute_broker_concentration).reset_index()
     out = agg.merge(broker, on=["Date", "Symbol"], how="left")
     out["imbalance"] = out["top_buyer_ratio"] - out["top_seller_ratio"]
+
     return out
 
 
 # =========================================================
-# MERGE + FEATURES
+# MERGE DATA
 # =========================================================
 def build_master_dataset(ohlc: pd.DataFrame, floor_daily: pd.DataFrame, sector: pd.DataFrame) -> pd.DataFrame:
     df = ohlc.merge(floor_daily, on=["Date", "Symbol"], how="left")
@@ -220,26 +239,29 @@ def build_master_dataset(ohlc: pd.DataFrame, floor_daily: pd.DataFrame, sector: 
     return df.sort_values(["Symbol", "Date"]).reset_index(drop=True)
 
 
+# =========================================================
+# FEATURE ENGINEERING
+# =========================================================
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     g = df.groupby("Symbol", group_keys=False)
 
-    # Moving averages
+    # Moving averages from Close
     for w in [5, 10, 20, 35, 50]:
         df[f"ma{w}"] = g["Close"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
 
-    # Returns
+    # Returns from Close
     for w in [3, 5, 10, 20]:
         df[f"ret_{w}"] = g["Close"].transform(lambda s, w=w: s.pct_change(w))
 
-    # Rolling averages
+    # Rolling averages for FLOOR SHEET VOLUME and other floor sheet data
     for w in [10, 20]:
         df[f"vol_fs_avg{w}"] = g["volume_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"turnover_fs_avg{w}"] = g["turnover_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"num_trades_avg{w}"] = g["num_trades"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"imbalance_avg{w}"] = g["imbalance"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
 
-    # Ratios
+    # Ratios using FLOOR SHEET VOLUME
     df["vol_ratio_10"] = safe_div(df["volume_fs"], df["vol_fs_avg10"])
     df["vol_ratio_20"] = safe_div(df["volume_fs"], df["vol_fs_avg20"])
     df["turnover_ratio_10"] = safe_div(df["turnover_fs"], df["turnover_fs_avg10"])
@@ -247,7 +269,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["num_trades_ratio_10"] = safe_div(df["num_trades"], df["num_trades_avg10"])
     df["num_trades_ratio_20"] = safe_div(df["num_trades"], df["num_trades_avg20"])
 
-    # WAP strength
+    # WAP / VWAP strength from FLOOR SHEET WAP
     df["wap_diff"] = df["Close"] - df["wap_fs"]
     df["wap_strength"] = safe_div(df["wap_diff"], df["wap_fs"])
 
@@ -259,7 +281,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["breakout_5d"] = (df["Close"] > df["prev_high_5"]).astype(int)
     df["breakout_20d"] = (df["Close"] > df["prev_high_20"]).astype(int)
 
-    # Multi-day confirmation
+    # Multi-day bullish confirmation
     df["bull_day_short"] = (
         (df["Close"] > df["ma10"]) &
         (df["Close"] > df["wap_fs"]) &
@@ -277,7 +299,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["confirm_3d_short"] = g["bull_day_short"].transform(lambda s: s.rolling(3, min_periods=3).sum())
     df["confirm_5d_long"] = g["bull_day_long"].transform(lambda s: s.rolling(5, min_periods=5).sum())
 
-    # WAP persistence / broker persistence
+    # Persistence features
     df["wap_strength_avg3"] = g["wap_strength"].transform(lambda s: s.rolling(3, min_periods=3).mean())
     df["wap_strength_avg5"] = g["wap_strength"].transform(lambda s: s.rolling(5, min_periods=5).mean())
     df["top_buy_persist_3"] = g["top_buyer_ratio"].transform(lambda s: s.rolling(3, min_periods=3).mean())
@@ -287,21 +309,17 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# INSIGHT / REASON BUILDERS
+# SHORT-TERM MODEL
 # =========================================================
-def join_reasons(reasons):
-    return " | ".join(reasons) if reasons else "No strong confirmation"
-
-
 def short_term_score_and_reason(row):
     score = 0
     reasons = []
     negative_reasons = []
 
-    # Liquidity
+    # Liquidity from FLOOR SHEET VOLUME
     if pd.notna(row["volume_fs"]) and row["volume_fs"] >= MIN_VOLUME_FS:
         score += 1
-        reasons.append("Good liquidity from floor sheet volume")
+        reasons.append("Good liquidity from floor-sheet volume")
     else:
         negative_reasons.append("Low floor-sheet volume")
 
@@ -336,12 +354,12 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("5-day momentum is weak")
 
-    # Participation
+    # Participation from FLOOR SHEET VOLUME
     if pd.notna(row["vol_ratio_10"]) and row["vol_ratio_10"] > 1.15:
         score += 1
-        reasons.append("Volume is above 10-day average")
+        reasons.append("Floor-sheet volume is above 10-day average")
     else:
-        negative_reasons.append("Volume is not strong vs 10-day average")
+        negative_reasons.append("Floor-sheet volume is not strong vs 10-day average")
 
     if pd.notna(row["turnover_ratio_10"]) and row["turnover_ratio_10"] > 1.10:
         score += 1
@@ -355,7 +373,7 @@ def short_term_score_and_reason(row):
     else:
         negative_reasons.append("Trade count is not expanding")
 
-    # WAP / broker
+    # WAP and broker behavior from FLOOR SHEET
     if pd.notna(row["wap_fs"]) and row["Close"] > row["wap_fs"]:
         score += 2
         reasons.append("Close is above floor-sheet WAP, buyers controlled the session")
@@ -405,7 +423,7 @@ def short_term_score_and_reason(row):
 
     if score >= SHORT_STRONG_BUY:
         signal = "STRONG BUY"
-        insight = "Strong short-term bullish setup with trend, momentum, participation, and broker confirmation aligned"
+        insight = "Strong short-term bullish setup with trend, momentum, floor-sheet volume, WAP, and broker confirmation aligned"
         why = join_reasons(reasons)
     elif score >= SHORT_BUY:
         signal = "BUY"
@@ -417,21 +435,24 @@ def short_term_score_and_reason(row):
         why = join_reasons(reasons + negative_reasons[:3])
     else:
         signal = "SELL"
-        insight = "Weak short-term structure. Trend, participation, or broker control is not supportive"
+        insight = "Weak short-term structure. Trend, floor-sheet volume, participation, or broker control is not supportive"
         why = join_reasons(negative_reasons[:6])
 
     return score, signal, insight, why
 
 
+# =========================================================
+# LONG-TERM MODEL
+# =========================================================
 def long_term_score_and_reason(row):
     score = 0
     reasons = []
     negative_reasons = []
 
-    # Liquidity
+    # Liquidity from FLOOR SHEET VOLUME
     if pd.notna(row["volume_fs"]) and row["volume_fs"] >= MIN_VOLUME_FS:
         score += 1
-        reasons.append("Good liquidity from floor sheet volume")
+        reasons.append("Good liquidity from floor-sheet volume")
     else:
         negative_reasons.append("Low floor-sheet volume")
 
@@ -473,12 +494,12 @@ def long_term_score_and_reason(row):
     else:
         negative_reasons.append("20-day momentum is weak")
 
-    # Participation
+    # Participation from FLOOR SHEET VOLUME
     if pd.notna(row["vol_ratio_20"]) and row["vol_ratio_20"] > 1.10:
         score += 1
-        reasons.append("Volume is above 20-day average")
+        reasons.append("Floor-sheet volume is above 20-day average")
     else:
-        negative_reasons.append("Volume is not strong vs 20-day average")
+        negative_reasons.append("Floor-sheet volume is not strong vs 20-day average")
 
     if pd.notna(row["turnover_ratio_20"]) and row["turnover_ratio_20"] > 1.05:
         score += 1
@@ -536,7 +557,7 @@ def long_term_score_and_reason(row):
 
     if score >= LONG_STRONG_BUY:
         signal = "STRONG BUY"
-        insight = "Strong longer-term bullish structure with trend, momentum, and broker persistence aligned"
+        insight = "Strong longer-term bullish structure with trend, momentum, floor-sheet volume, WAP, and broker persistence aligned"
         why = join_reasons(reasons)
     elif score >= LONG_BUY:
         signal = "BUY"
@@ -548,7 +569,7 @@ def long_term_score_and_reason(row):
         why = join_reasons(reasons + negative_reasons[:3])
     else:
         signal = "SELL"
-        insight = "Weak longer-term structure. Trend, broker persistence, or momentum is not supportive"
+        insight = "Weak longer-term structure. Trend, floor-sheet volume, broker persistence, or momentum is not supportive"
         why = join_reasons(negative_reasons[:6])
 
     return score, signal, insight, why
@@ -576,7 +597,7 @@ def apply_models(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# FINAL SHEETS
+# FINAL SHEET BUILDERS
 # =========================================================
 def latest_rows(df: pd.DataFrame) -> pd.DataFrame:
     return (
@@ -589,7 +610,7 @@ def latest_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_short_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
     cols = [
-        "Date", "Symbol", "Sector", "Company", "Close",
+        "Date", "Symbol", "Sector", "Company", "Open", "High", "Low", "Close",
         "volume_fs", "wap_fs", "num_trades",
         "ma5", "ma10", "ret_3", "ret_5",
         "vol_ratio_10", "turnover_ratio_10",
@@ -603,7 +624,7 @@ def build_short_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
 
 def build_long_sheet(df_latest: pd.DataFrame) -> pd.DataFrame:
     cols = [
-        "Date", "Symbol", "Sector", "Company", "Close",
+        "Date", "Symbol", "Sector", "Company", "Open", "High", "Low", "Close",
         "volume_fs", "wap_fs", "num_trades",
         "ma20", "ma35", "ma50", "ret_10", "ret_20",
         "vol_ratio_20", "turnover_ratio_20",
@@ -626,13 +647,11 @@ def autofit_worksheet(ws):
         for cell in column_cells:
             try:
                 value = "" if cell.value is None else str(cell.value)
-                if len(value) > max_length:
-                    max_length = len(value)
+                max_length = max(max_length, len(value))
             except Exception:
                 pass
 
-        adjusted_width = min(max(max_length + 2, 10), 55)
-        ws.column_dimensions[col_letter].width = adjusted_width
+        ws.column_dimensions[col_letter].width = min(max(max_length + 2, 10), 55)
 
 
 def style_header(ws):
@@ -704,9 +723,13 @@ def write_excel(short_df: pd.DataFrame, long_df: pd.DataFrame, output_file: Path
 # MAIN
 # =========================================================
 def main():
-    print("Loading data...")
+    print("Loading share price data...")
     ohlc = load_ohlc_data(OHLC_DIR)
+
+    print("Loading floor sheet data...")
     floor = load_floor_sheet_data(FLOOR_DIR)
+
+    print("Loading sector master...")
     sector = load_sector_master(SECTOR_FILE)
 
     print("Aggregating floor sheet...")
@@ -721,7 +744,7 @@ def main():
     print("Applying short-term and long-term models...")
     df = apply_models(df)
 
-    # Need at least 20 rows per symbol for meaningful short-term features
+    # Keep rows with at least enough history for short-term features
     valid_rows = df.groupby("Symbol").cumcount() + 1
     df_model = df.loc[valid_rows >= 20].copy()
 
