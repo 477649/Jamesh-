@@ -20,11 +20,8 @@ SECTOR_FILE = BASE_DIR / "outputs" / "Sector" / "sector_master.csv"
 FLOOR_PATTERN = "floorsheet_*.csv"
 OHLC_PATTERN = "SharePrice_*.csv"
 
-# OUTPUT LOCATION YOU REQUESTED
 OUTPUT_DIR = BASE_DIR / "outputs" / "PriceAction"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# Excel file name will match the screenshot style, e.g. nepse_signals_2026-03-27.xlsx
 
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
@@ -93,22 +90,8 @@ def format_pct(x, decimals=2):
     return f"{x * 100:.{decimals}f}%"
 
 
-def signal_badge(signal: str) -> str:
-    signal = str(signal).strip().upper()
-    if signal == "STRONG BUY":
-        return '<span class="badge strong-buy">STRONG BUY</span>'
-    if signal == "BUY":
-        return '<span class="badge buy">BUY</span>'
-    if signal == "HOLD":
-        return '<span class="badge hold">HOLD</span>'
-    if signal == "SELL":
-        return '<span class="badge sell">SELL</span>'
-    return f'<span class="badge neutral">{signal}</span>'
-
-
 # =========================================================
 # LOAD SHARE PRICE DATA
-# ONLY TAKE: Symbol, Open, High, Low, Close
 # =========================================================
 def load_ohlc_data(ohlc_dir: Path) -> pd.DataFrame:
     files = sorted(ohlc_dir.glob(OHLC_PATTERN))
@@ -199,8 +182,6 @@ def load_sector_master(sector_file: Path) -> pd.DataFrame:
 
 # =========================================================
 # FLOOR SHEET AGGREGATION
-# VOLUME FROM FLOOR SHEET
-# WAP / VWAP FROM FLOOR SHEET
 # =========================================================
 def compute_broker_concentration(group: pd.DataFrame) -> pd.Series:
     total_qty = group["Quantity"].sum()
@@ -239,7 +220,6 @@ def aggregate_floor_sheet_daily(floor: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
-    # day-wise WAP from floor sheet
     agg["wap_fs"] = safe_div(agg["turnover_fs"], agg["volume_fs"])
     agg["avg_trade_size"] = safe_div(agg["volume_fs"], agg["num_trades"])
 
@@ -266,22 +246,18 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     g = df.groupby("Symbol", group_keys=False)
 
-    # Moving averages from Close
     for w in [5, 10, 20, 35, 50]:
         df[f"ma{w}"] = g["Close"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
 
-    # Returns from Close
     for w in [3, 5, 10, 20]:
         df[f"ret_{w}"] = g["Close"].transform(lambda s, w=w: s.pct_change(w))
 
-    # Rolling averages for floor-sheet data
     for w in [10, 20]:
         df[f"vol_fs_avg{w}"] = g["volume_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"turnover_fs_avg{w}"] = g["turnover_fs"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"num_trades_avg{w}"] = g["num_trades"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
         df[f"imbalance_avg{w}"] = g["imbalance"].transform(lambda s, w=w: s.rolling(w, min_periods=w).mean())
 
-    # Ratios using floor-sheet volume
     df["vol_ratio_10"] = safe_div(df["volume_fs"], df["vol_fs_avg10"])
     df["vol_ratio_20"] = safe_div(df["volume_fs"], df["vol_fs_avg20"])
     df["turnover_ratio_10"] = safe_div(df["turnover_fs"], df["turnover_fs_avg10"])
@@ -289,11 +265,9 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["num_trades_ratio_10"] = safe_div(df["num_trades"], df["num_trades_avg10"])
     df["num_trades_ratio_20"] = safe_div(df["num_trades"], df["num_trades_avg20"])
 
-    # WAP strength from floor-sheet WAP
     df["wap_diff"] = df["Close"] - df["wap_fs"]
     df["wap_strength"] = safe_div(df["wap_diff"], df["wap_fs"])
 
-    # Breakouts
     df["high_5"] = g["High"].transform(lambda s: s.rolling(5, min_periods=5).max())
     df["high_20"] = g["High"].transform(lambda s: s.rolling(20, min_periods=20).max())
     df["prev_high_5"] = g["high_5"].shift(1)
@@ -301,7 +275,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["breakout_5d"] = (df["Close"] > df["prev_high_5"]).astype(int)
     df["breakout_20d"] = (df["Close"] > df["prev_high_20"]).astype(int)
 
-    # Multi-day bullish confirmation
     df["bull_day_short"] = (
         (df["Close"] > df["ma10"]) &
         (df["Close"] > df["wap_fs"]) &
@@ -319,7 +292,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["confirm_3d_short"] = g["bull_day_short"].transform(lambda s: s.rolling(3, min_periods=3).sum())
     df["confirm_5d_long"] = g["bull_day_long"].transform(lambda s: s.rolling(5, min_periods=5).sum())
 
-    # Persistence features
     df["wap_strength_avg3"] = g["wap_strength"].transform(lambda s: s.rolling(3, min_periods=3).mean())
     df["wap_strength_avg5"] = g["wap_strength"].transform(lambda s: s.rolling(5, min_periods=5).mean())
     df["top_buy_persist_3"] = g["top_buyer_ratio"].transform(lambda s: s.rolling(3, min_periods=3).mean())
@@ -669,19 +641,26 @@ TITLE_FILL = PatternFill("solid", fgColor="0F172A")
 SECTION_FILL = PatternFill("solid", fgColor="1E293B")
 SUMMARY_FILL = PatternFill("solid", fgColor="E2E8F0")
 
-def sanitize_sheet_title(name: str) -> str:
-    invalid = set('[]:*?/\\')
-    cleaned = ''.join('_' if ch in invalid else ch for ch in name)
-    return cleaned[:31]
 
-def format_sheet_values(df: pd.DataFrame, kind: str) -> pd.DataFrame:
+def format_sheet_values(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if "Date" in out.columns:
         out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
 
-    two_dec_cols = {"Open", "High", "Low", "Close", "wap_fs", "ma5", "ma10", "ma20", "ma35", "ma50", "vol_ratio_10", "vol_ratio_20", "turnover_ratio_10", "turnover_ratio_20", "imbalance", "imbalance_avg20"}
-    int_cols = {"volume_fs", "num_trades", "confirm_3d_short", "confirm_5d_long", "breakout_5d", "breakout_20d", "short_score", "long_score"}
-    pct_cols = {"ret_3", "ret_5", "ret_10", "ret_20", "top_buyer_ratio", "top_seller_ratio", "top3_buyer_ratio", "top3_seller_ratio", "wap_strength_avg3", "wap_strength_avg5"}
+    two_dec_cols = {
+        "Open", "High", "Low", "Close", "wap_fs", "ma5", "ma10",
+        "ma20", "ma35", "ma50", "vol_ratio_10", "vol_ratio_20",
+        "turnover_ratio_10", "turnover_ratio_20", "imbalance", "imbalance_avg20"
+    }
+    int_cols = {
+        "volume_fs", "num_trades", "confirm_3d_short", "confirm_5d_long",
+        "breakout_5d", "breakout_20d", "short_score", "long_score"
+    }
+    pct_cols = {
+        "ret_3", "ret_5", "ret_10", "ret_20", "top_buyer_ratio",
+        "top_seller_ratio", "top3_buyer_ratio", "top3_seller_ratio",
+        "wap_strength_avg3", "wap_strength_avg5"
+    }
 
     for col in out.columns:
         if col in two_dec_cols:
@@ -690,20 +669,11 @@ def format_sheet_values(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             out[col] = out[col].map(lambda x: format_num(x, 0))
         elif col in pct_cols:
             out[col] = out[col].map(format_pct)
+        else:
+            out[col] = out[col].fillna("")
 
     return out
 
-def autofit_worksheet(ws):
-    for col_cells in ws.columns:
-        col_idx = col_cells[0].column
-        max_len = 0
-        for cell in col_cells:
-            val = "" if cell.value is None else str(cell.value)
-            if '\n' in val:
-                val = max(val.split('\n'), key=len)
-            max_len = max(max_len, len(val))
-        width = min(max(max_len + 2, 10), 60)
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
 
 def style_header_row(ws, row_idx: int):
     for cell in ws[row_idx]:
@@ -714,16 +684,17 @@ def style_header_row(ws, row_idx: int):
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = THIN_BORDER
 
-def apply_body_style(ws, start_row: int, end_row: int, signal_col_name: str | None = None):
+
+def apply_body_style(ws, start_row: int, end_row: int, signal_col_name=None):
     headers = {cell.value: cell.column for cell in ws[start_row - 1] if cell.value is not None}
     signal_col = headers.get(signal_col_name) if signal_col_name else None
 
     for r in range(start_row, end_row + 1):
-        fill_color = "111827" if (r - start_row) % 2 == 0 else "0B1220"
+        fill_color = "FFFFFF" if (r - start_row) % 2 == 0 else "F8FAFC"
         for c in range(1, ws.max_column + 1):
             cell = ws.cell(r, c)
             cell.fill = PatternFill("solid", fgColor=fill_color)
-            cell.font = Font(color="E5E7EB")
+            cell.font = Font(color="000000")
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             cell.border = THIN_BORDER
 
@@ -733,39 +704,118 @@ def apply_body_style(ws, start_row: int, end_row: int, signal_col_name: str | No
             if signal in SIGNAL_FILL_MAP:
                 signal_cell.fill = PatternFill("solid", fgColor=SIGNAL_FILL_MAP[signal])
                 signal_cell.font = Font(color="FFFFFF", bold=True)
-                signal_cell.alignment = Alignment(horizontal="center", vertical="center")
+                signal_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
 
 def add_table(ws, start_row: int, end_row: int, display_name: str):
     ref = f"A{start_row}:{get_column_letter(ws.max_column)}{end_row}"
     table = Table(displayName=display_name, ref=ref)
-    style = TableStyleInfo(name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False, showRowStripes=False, showColumnStripes=False)
+    style = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=False,
+        showColumnStripes=False
+    )
     table.tableStyleInfo = style
     ws.add_table(table)
 
-def write_section_table(ws, start_row: int, title: str, df: pd.DataFrame, table_name: str, signal_column: str):
-    last_col = get_column_letter(max(1, len(df.columns)))
-    ws.merge_cells(f"A{start_row}:{last_col}{start_row}")
-    title_cell = ws.cell(start_row, 1, title)
-    title_cell.fill = SECTION_FILL
-    title_cell.font = Font(color="FFFFFF", bold=True, size=14)
-    title_cell.alignment = Alignment(horizontal="left", vertical="center")
 
-    header_row = start_row + 1
-    for c_idx, col in enumerate(df.columns, start=1):
-        ws.cell(header_row, c_idx, col)
-    style_header_row(ws, header_row)
+def autofit_worksheet(ws):
+    for col_cells in ws.columns:
+        col_idx = col_cells[0].column
+        max_len = 0
+        for cell in col_cells:
+            val = "" if cell.value is None else str(cell.value)
+            longest = max(val.split("\n"), key=len) if "\n" in val else val
+            max_len = max(max_len, len(longest))
+            if cell.row > 1:
+                lines = max(1, len(val.split("\n")))
+                current_height = ws.row_dimensions[cell.row].height or 15
+                ws.row_dimensions[cell.row].height = max(current_height, min(15 * lines + 6, 90))
+        width = min(max(max_len + 2, 10), 60)
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    for r_offset, row in enumerate(df.itertuples(index=False), start=1):
+
+def create_summary_sheet(wb, latest_date, short_df, long_df):
+    ws = wb.active
+    ws.title = "Summary"
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells("A1:F1")
+    ws["A1"] = "NEPSE Price Action Report"
+    ws["A1"].fill = TITLE_FILL
+    ws["A1"].font = Font(color="FFFFFF", bold=True, size=18)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.merge_cells("A2:F2")
+    ws["A2"] = f"Report Date: {latest_date.strftime('%Y-%m-%d')} | Generated: {datetime.now().strftime('%Y-%m-%d %I:%M %p')}"
+    ws["A2"].fill = TITLE_FILL
+    ws["A2"].font = Font(color="CBD5E1", italic=True, size=11)
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+
+    short_counts = short_df["short_signal"].value_counts().to_dict() if not short_df.empty else {}
+    long_counts = long_df["long_signal"].value_counts().to_dict() if not long_df.empty else {}
+
+    rows = [
+        ["Section", "STRONG BUY", "BUY", "HOLD", "SELL", "Total"],
+        ["Short-Term", short_counts.get("STRONG BUY", 0), short_counts.get("BUY", 0), short_counts.get("HOLD", 0), short_counts.get("SELL", 0), len(short_df)],
+        ["Long-Term", long_counts.get("STRONG BUY", 0), long_counts.get("BUY", 0), long_counts.get("HOLD", 0), long_counts.get("SELL", 0), len(long_df)],
+    ]
+
+    start_row = 4
+    for r_idx, row in enumerate(rows, start=start_row):
         for c_idx, value in enumerate(row, start=1):
-            ws.cell(header_row + r_offset, c_idx, value)
+            ws.cell(r_idx, c_idx, value)
 
-    data_start = header_row + 1
-    data_end = header_row + len(df)
+    style_header_row(ws, start_row)
+    apply_body_style(ws, start_row + 1, start_row + len(rows) - 1)
+    add_table(ws, start_row, start_row + len(rows) - 1, "SummaryTable")
+
+    ws["A9"] = "Workbook Structure"
+    ws["A9"].fill = SECTION_FILL
+    ws["A9"].font = Font(color="FFFFFF", bold=True, size=12)
+
+    ws["A10"] = "Summary"
+    ws["B10"] = "Signal counts for short-term and long-term output."
+    ws["A11"] = "Short_Term"
+    ws["B11"] = "Latest symbol-wise short-term signal sheet."
+    ws["A12"] = "Long_Term"
+    ws["B12"] = "Latest symbol-wise long-term signal sheet."
+
+    for r in range(10, 13):
+        for c in range(1, 3):
+            ws.cell(r, c).alignment = Alignment(wrap_text=True, vertical="top")
+            ws.cell(r, c).border = THIN_BORDER
+
+    ws.freeze_panes = "A5"
+    autofit_worksheet(ws)
+    ws.row_dimensions[1].height = 24
+    ws.row_dimensions[2].height = 20
+    return ws
+
+
+def create_data_sheet(wb, title: str, df: pd.DataFrame, signal_column: str, table_name: str):
+    ws = wb.create_sheet(title)
+    ws.sheet_view.showGridLines = False
+
+    for c_idx, col in enumerate(df.columns, start=1):
+        ws.cell(1, c_idx, col)
+    style_header_row(ws, 1)
+
+    for r_idx, row in enumerate(df.itertuples(index=False), start=2):
+        for c_idx, value in enumerate(row, start=1):
+            ws.cell(r_idx, c_idx, value)
+
     if len(df) > 0:
-        apply_body_style(ws, data_start, data_end, signal_column)
-        add_table(ws, header_row, data_end, table_name)
+        apply_body_style(ws, 2, len(df) + 1, signal_column)
+        add_table(ws, 1, len(df) + 1, table_name)
 
-    return data_end + 2
+    ws.freeze_panes = "A2"
+    autofit_worksheet(ws)
+    ws.row_dimensions[1].height = 24
+    return ws
+
 
 def create_excel_report(short_df: pd.DataFrame, long_df: pd.DataFrame, output_dir: Path) -> Path:
     latest_date = None
@@ -778,53 +828,17 @@ def create_excel_report(short_df: pd.DataFrame, long_df: pd.DataFrame, output_di
 
     output_file = output_dir / f"nepse_signals_{latest_date.strftime('%Y-%m-%d')}.xlsx"
 
-    short_fmt = format_sheet_values(short_df, "short")
-    long_fmt = format_sheet_values(long_df, "long")
+    short_fmt = format_sheet_values(short_df)
+    long_fmt = format_sheet_values(long_df)
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = sanitize_sheet_title(latest_date.strftime("%Y-%m-%d"))
-    ws.sheet_view.showGridLines = False
-
-    max_cols = max(len(short_fmt.columns), len(long_fmt.columns), 4)
-    last_col = get_column_letter(max_cols)
-
-    ws.merge_cells(f"A1:{last_col}1")
-    ws["A1"] = "NEPSE Price Action Report"
-    ws["A1"].fill = TITLE_FILL
-    ws["A1"].font = Font(color="FFFFFF", bold=True, size=18)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-
-    ws.merge_cells(f"A2:{last_col}2")
-    ws["A2"] = f"Daily floorsheet + market overview + price action report ({datetime.now().strftime('%I:%M %p')})"
-    ws["A2"].fill = TITLE_FILL
-    ws["A2"].font = Font(color="CBD5E1", italic=True, size=11)
-    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
-
-    short_counts = short_df["short_signal"].value_counts().to_dict() if not short_df.empty else {}
-    long_counts = long_df["long_signal"].value_counts().to_dict() if not long_df.empty else {}
-
-    ws["A4"] = "Short-Term Summary"
-    ws["A5"] = f"STRONG BUY: {short_counts.get('STRONG BUY', 0)} | BUY: {short_counts.get('BUY', 0)} | HOLD: {short_counts.get('HOLD', 0)} | SELL: {short_counts.get('SELL', 0)}"
-    ws["C4"] = "Long-Term Summary"
-    ws["C5"] = f"STRONG BUY: {long_counts.get('STRONG BUY', 0)} | BUY: {long_counts.get('BUY', 0)} | HOLD: {long_counts.get('HOLD', 0)} | SELL: {long_counts.get('SELL', 0)}"
-    for cell_ref in ("A4", "C4"):
-        ws[cell_ref].font = Font(bold=True, color="0F172A")
-        ws[cell_ref].fill = SUMMARY_FILL
-    for cell_ref in ("A5", "C5"):
-        ws[cell_ref].alignment = Alignment(wrap_text=True)
-
-    next_row = 7
-    next_row = write_section_table(ws, next_row, "Short-Term Signals", short_fmt, "ShortTermSignals", "short_signal")
-    next_row = write_section_table(ws, next_row, "Long-Term Signals", long_fmt, "LongTermSignals", "long_signal")
-
-    ws.freeze_panes = "A8"
-    autofit_worksheet(ws)
-    ws.row_dimensions[1].height = 24
-    ws.row_dimensions[2].height = 20
+    create_summary_sheet(wb, latest_date, short_df, long_df)
+    create_data_sheet(wb, "Short_Term", short_fmt, "short_signal", "ShortTermSignals")
+    create_data_sheet(wb, "Long_Term", long_fmt, "long_signal", "LongTermSignals")
 
     wb.save(output_file)
     return output_file
+
 
 def main():
     ohlc = load_ohlc_data(OHLC_DIR)
@@ -836,7 +850,6 @@ def main():
     df = add_features(df)
     df = apply_models(df)
 
-    # keep rows with at least enough history for short-term features
     valid_rows = df.groupby("Symbol").cumcount() + 1
     df_model = df.loc[valid_rows >= 20].copy()
 
@@ -846,7 +859,7 @@ def main():
     long_sheet = build_long_sheet(latest)
 
     output_file = create_excel_report(short_sheet, long_sheet, OUTPUT_DIR)
-    print(f"Saved Excel report: {output_file}")
+    print(f"Saved Excel report: {output_file.resolve()}")
 
 
 if __name__ == "__main__":
