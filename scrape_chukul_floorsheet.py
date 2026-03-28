@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -16,7 +17,10 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
-DATE_TO_PICK = "25/03/2026"
+
+# Auto-pick today's Nepal date
+NPT = timezone(timedelta(hours=5, minutes=45))
+DATE_TO_PICK = datetime.now(NPT).strftime("%d/%m/%Y")
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
@@ -188,7 +192,7 @@ def has_valid_rows(rows):
     return False
 
 
-def pick_manual_date_and_confirm_data(driver, wait):
+def pick_today_date_and_confirm_data(driver, wait):
     """
     FIRST CODE ONLY:
     Just confirm whether data exists or not for DATE_TO_PICK.
@@ -233,6 +237,7 @@ def pick_manual_date_and_confirm_data(driver, wait):
 
         if valid_rows:
             print("RESULT: yes")
+            print(f"Rows found on confirmation page: {len(valid_rows)}")
             return True
 
         print("RESULT: no")
@@ -245,9 +250,7 @@ def pick_manual_date_and_confirm_data(driver, wait):
 
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    npt = timezone(timedelta(hours=5, minutes=45))
-    run_date = datetime.now(npt).strftime("%Y-%m-%d")
+    run_date = datetime.now(NPT).strftime("%Y-%m-%d")
 
     out_dir = os.path.join(base_dir, "outputs", "Floor Sheet")
     os.makedirs(out_dir, exist_ok=True)
@@ -258,14 +261,14 @@ def main():
     wait = WebDriverWait(driver, 30)
 
     try:
-        # FIRST CODE: only confirm yes/no
-        if not pick_manual_date_and_confirm_data(driver, wait):
-            print("Stopping script because no data exists.")
-            return
+        # FIRST CODE: confirmation only
+        if not pick_today_date_and_confirm_data(driver, wait):
+            print("Stopping workflow: no data exists for today's date.")
+            sys.exit(1)
 
         print("Data exists. Running scraper...")
 
-        # SECOND CODE: scrape data
+        # SECOND CODE: actual scraping
         all_data = []
         page_no = 1
 
