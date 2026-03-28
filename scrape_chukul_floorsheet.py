@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
+DATE_TO_PICK = "27/03/2026"
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
@@ -25,8 +26,6 @@ TABLE_SELECTOR = (
 
 EXPECTED_HEADER = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
 
-# Nepal time and today's date auto-pick
-DATE_TO_PICK = "25/03/2026"
 
 def parse_numeric(value):
     """Convert values like '5.27 K' or '2.63 Lac.' into numbers."""
@@ -189,10 +188,10 @@ def has_valid_rows(rows):
     return False
 
 
-def pick_today_date_and_confirm_data(driver, wait):
+def pick_manual_date_and_confirm_data(driver, wait):
     """
     FIRST CODE ONLY:
-    Just confirm whether data exists or not for today's date.
+    Just confirm whether data exists or not for DATE_TO_PICK.
     If yes -> return True
     If no -> return False
     """
@@ -245,13 +244,11 @@ def pick_today_date_and_confirm_data(driver, wait):
 
 
 def main():
-    # Repo root
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Nepal time
+    npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
-    # Output path
     out_dir = os.path.join(base_dir, "outputs", "Floor Sheet")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -262,7 +259,7 @@ def main():
 
     try:
         # FIRST CODE: only confirm yes/no
-        if not pick_today_date_and_confirm_data(driver, wait):
+        if not pick_manual_date_and_confirm_data(driver, wait):
             print("Stopping script because no data exists.")
             return
 
@@ -296,8 +293,6 @@ def main():
 
         df["Quantity"] = df["Quantity"].apply(parse_numeric)
         df["Rate"] = df["Rate"].apply(parse_numeric)
-
-        # Recalculate Amount from Quantity * Rate
         df["Amount"] = df["Quantity"] * df["Rate"]
 
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")
