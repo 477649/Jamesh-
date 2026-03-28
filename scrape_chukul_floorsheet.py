@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
+DATE_TO_PICK = "27/03/2026"
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
@@ -211,6 +212,65 @@ def check_data_available(driver, wait):
         return False
 
 
+# ---------------- FIRST CODE LOGIC ADDED AT START ---------------- #
+
+def pick_date_and_check_yes_no(driver, wait):
+    """
+    Exact first logic:
+    Open site -> pick date -> check if table has valid rows
+    If yes -> return True
+    Else -> return False
+    """
+    driver.get(URL)
+    time.sleep(3)
+
+    day_to_pick = str(int(DATE_TO_PICK.split("/")[0]))
+    print("Using date:", DATE_TO_PICK)
+    print("Picking day:", day_to_pick)
+
+    calendar_icon = wait.until(
+        EC.element_to_be_clickable((
+            By.XPATH,
+            "//i[contains(@class,'material-icons') and normalize-space()='calendar_today']"
+        ))
+    )
+    driver.execute_script("arguments[0].click();", calendar_icon)
+    time.sleep(2)
+
+    day_button = wait.until(
+        EC.element_to_be_clickable((
+            By.XPATH,
+            f"//div[contains(@class,'q-date__calendar-days')]//button[.//span[contains(@class,'block') and normalize-space()='{day_to_pick}']]"
+        ))
+    )
+    driver.execute_script("arguments[0].click();", day_button)
+    time.sleep(2)
+
+    try:
+        wait_for_table(driver, wait)
+        rows = scrape_current_page(driver)
+
+        valid_rows = []
+        for row in rows:
+            row_text = " ".join(row).strip().lower()
+            if row_text and "no data" not in row_text and "no records" not in row_text:
+                valid_rows.append(row)
+
+        if valid_rows:
+            print("FIRST CHECK RESULT: yes")
+            print(f"Rows found: {len(valid_rows)}")
+            return True
+        else:
+            print("FIRST CHECK RESULT: no")
+            return False
+
+    except TimeoutException:
+        print("FIRST CHECK RESULT: no")
+        return False
+
+
+# ---------------- MAIN SECOND CODE ---------------- #
+
 def main():
     # Repo root
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -229,12 +289,16 @@ def main():
     wait = WebDriverWait(driver, 30)
 
     try:
-        print("Opening website...")
-        driver.get(URL)
+        print("Opening website for first check...")
 
-        if not check_data_available(driver, wait):
-            print("Stopping script because no data available.")
+        # FIRST LOGIC:
+        # if yes -> continue
+        # if no -> stop
+        if not pick_date_and_check_yes_no(driver, wait):
+            print("Stopping script because first check returned NO.")
             return
+
+        print("First check returned YES. Running second code...")
 
         all_data = []
         page_no = 1
