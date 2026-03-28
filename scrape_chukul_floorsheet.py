@@ -26,9 +26,7 @@ TABLE_SELECTOR = (
 EXPECTED_HEADER = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
 
 # Nepal time and today's date auto-pick
-npt = timezone(timedelta(hours=5, minutes=45))
-DATE_TO_PICK = datetime.now(npt).strftime("%d/%m/%Y")
-
+DATE_TO_PICK = "25/03/2026"
 
 def parse_numeric(value):
     """Convert values like '5.27 K' or '2.63 Lac.' into numbers."""
