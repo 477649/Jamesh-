@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
-DATE_TO_PICK = "27/03/2026"
+DATE_TO_PICK = "25/03/2026"
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
