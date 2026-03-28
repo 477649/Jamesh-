@@ -16,7 +16,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
-DATE_TO_PICK = "27/03/2026"
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
@@ -25,6 +24,10 @@ TABLE_SELECTOR = (
 )
 
 EXPECTED_HEADER = ["Transact No.", "Symbol", "Buyer", "Seller", "Quantity", "Rate", "Amount"]
+
+# Nepal time and today's date auto-pick
+npt = timezone(timedelta(hours=5, minutes=45))
+DATE_TO_PICK = datetime.now(npt).strftime("%d/%m/%Y")
 
 
 def parse_numeric(value):
@@ -188,39 +191,14 @@ def has_valid_rows(rows):
     return False
 
 
-def check_data_available(driver, wait):
+def pick_today_date_and_confirm_data(driver, wait):
     """
-    Only keep yes/no logic:
-    - if data exists -> yes
-    - if no data -> no
-    """
-    try:
-        wait_for_table(driver, wait)
-        time.sleep(2)
-
-        rows = scrape_current_page(driver)
-
-        if has_valid_rows(rows):
-            print("RESULT: yes")
-            return True
-
-        print("RESULT: no")
-        return False
-
-    except TimeoutException:
-        print("RESULT: no")
-        return False
-
-
-# ---------------- FIRST CODE LOGIC ADDED AT START ---------------- #
-
-def pick_date_and_check_yes_no(driver, wait):
-    """
-    Exact first logic:
-    Open site -> pick date -> check if table has valid rows
+    FIRST CODE ONLY:
+    Just confirm whether data exists or not for today's date.
     If yes -> return True
-    Else -> return False
+    If no -> return False
     """
+    print("Opening website for confirmation check...")
     driver.get(URL)
     time.sleep(3)
 
@@ -257,26 +235,22 @@ def pick_date_and_check_yes_no(driver, wait):
                 valid_rows.append(row)
 
         if valid_rows:
-            print("FIRST CHECK RESULT: yes")
-            print(f"Rows found: {len(valid_rows)}")
+            print("RESULT: yes")
             return True
-        else:
-            print("FIRST CHECK RESULT: no")
-            return False
 
-    except TimeoutException:
-        print("FIRST CHECK RESULT: no")
+        print("RESULT: no")
         return False
 
+    except TimeoutException:
+        print("RESULT: no")
+        return False
 
-# ---------------- MAIN SECOND CODE ---------------- #
 
 def main():
     # Repo root
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Nepal time
-    npt = timezone(timedelta(hours=5, minutes=45))
     run_date = datetime.now(npt).strftime("%Y-%m-%d")
 
     # Output path
@@ -289,17 +263,14 @@ def main():
     wait = WebDriverWait(driver, 30)
 
     try:
-        print("Opening website for first check...")
-
-        # FIRST LOGIC:
-        # if yes -> continue
-        # if no -> stop
-        if not pick_date_and_check_yes_no(driver, wait):
-            print("Stopping script because first check returned NO.")
+        # FIRST CODE: only confirm yes/no
+        if not pick_today_date_and_confirm_data(driver, wait):
+            print("Stopping script because no data exists.")
             return
 
-        print("First check returned YES. Running second code...")
+        print("Data exists. Running scraper...")
 
+        # SECOND CODE: scrape data
         all_data = []
         page_no = 1
 
