@@ -1,6 +1,6 @@
+
 import os
 import re
-import sys
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -17,10 +17,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 URL = "https://chukul.com/floorsheet"
-
-# Auto-pick today's Nepal date
-NPT = timezone(timedelta(hours=5, minutes=45))
-DATE_TO_PICK = datetime.now(NPT).strftime("%d/%m/%Y")
 
 TABLE_SELECTOR = (
     "#q-app > div > div > div.q-page-container.mobile-padding > "
@@ -192,52 +188,20 @@ def has_valid_rows(rows):
     return False
 
 
-def pick_today_date_and_confirm_data(driver, wait):
+def check_data_available(driver, wait):
     """
-    FIRST CODE ONLY:
-    Just confirm whether data exists or not for DATE_TO_PICK.
-    If yes -> return True
-    If no -> return False
+    Only keep yes/no logic:
+    - if data exists -> yes
+    - if no data -> no
     """
-    print("Opening website for confirmation check...")
-    driver.get(URL)
-    time.sleep(3)
-
-    day_to_pick = str(int(DATE_TO_PICK.split("/")[0]))
-    print("Using date:", DATE_TO_PICK)
-    print("Picking day:", day_to_pick)
-
-    calendar_icon = wait.until(
-        EC.element_to_be_clickable((
-            By.XPATH,
-            "//i[contains(@class,'material-icons') and normalize-space()='calendar_today']"
-        ))
-    )
-    driver.execute_script("arguments[0].click();", calendar_icon)
-    time.sleep(2)
-
-    day_button = wait.until(
-        EC.element_to_be_clickable((
-            By.XPATH,
-            f"//div[contains(@class,'q-date__calendar-days')]//button[.//span[contains(@class,'block') and normalize-space()='{day_to_pick}']]"
-        ))
-    )
-    driver.execute_script("arguments[0].click();", day_button)
-    time.sleep(2)
-
     try:
         wait_for_table(driver, wait)
+        time.sleep(2)
+
         rows = scrape_current_page(driver)
 
-        valid_rows = []
-        for row in rows:
-            row_text = " ".join(row).strip().lower()
-            if row_text and "no data" not in row_text and "no records" not in row_text:
-                valid_rows.append(row)
-
-        if valid_rows:
+        if has_valid_rows(rows):
             print("RESULT: yes")
-            print(f"Rows found on confirmation page: {len(valid_rows)}")
             return True
 
         print("RESULT: no")
@@ -249,9 +213,14 @@ def pick_today_date_and_confirm_data(driver, wait):
 
 
 def main():
+    # Repo root
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    run_date = datetime.now(NPT).strftime("%Y-%m-%d")
 
+    # Nepal time
+    npt = timezone(timedelta(hours=5, minutes=45))
+    run_date = datetime.now(npt).strftime("%Y-%m-%d")
+
+    # Output path
     out_dir = os.path.join(base_dir, "outputs", "Floor Sheet")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -261,14 +230,13 @@ def main():
     wait = WebDriverWait(driver, 30)
 
     try:
-        # FIRST CODE: confirmation only
-        if not pick_today_date_and_confirm_data(driver, wait):
-            print("Stopping workflow: no data exists for today's date.")
-            sys.exit(1)
+        print("Opening website...")
+        driver.get(URL)
 
-        print("Data exists. Running scraper...")
+        if not check_data_available(driver, wait):
+            print("Stopping script because no data available.")
+            return
 
-        # SECOND CODE: actual scraping
         all_data = []
         page_no = 1
 
@@ -296,6 +264,8 @@ def main():
 
         df["Quantity"] = df["Quantity"].apply(parse_numeric)
         df["Rate"] = df["Rate"].apply(parse_numeric)
+
+        # Recalculate Amount from Quantity * Rate
         df["Amount"] = df["Quantity"] * df["Rate"]
 
         df.to_csv(out_csv, index=False, encoding="utf-8-sig")
